@@ -34,6 +34,7 @@
 14. [Appendix: file map](#14--appendix-file-map)
 15. [Appendix: running it locally](#15--appendix-running-it-locally)
 16. [The simplification pass](#16--the-simplification-pass)
+17. [Arenas and derived tuning](#17--arenas-and-derived-tuning)
 
 ---
 
@@ -842,6 +843,9 @@ this whole document is:
 > scores stay comparable, and the arena becomes a thing the community talks
 > about. This requires **no new systems** — only moving the four exported arrays
 > into an array of objects and adding one field to `RunStartResponse`.
+>
+> **Done — see §17.** It cost one field on `RunStartResponse` and one pure
+> function in `shared/config.ts`, exactly as costed.
 
 ---
 
@@ -851,7 +855,7 @@ Sequenced so each tier is independently shippable.
 
 ### Tier 1 — deepen what exists (no new systems)
 
-- **Multiple arenas per round** (§12.3). Highest value per line of code.
+- ~~**Multiple arenas per round**~~ — **done**, see §17.
 - **Personal best & run history.** A `p:{uid}:best` string and a `p:{uid}:runs`
   capped zset. Gives a solo player a reason to run again when their team is
   comfortably ahead.
@@ -1103,3 +1107,91 @@ wire; the client simply reports zero for them, and `RUN_CAPS` still validates
 them. Nothing about the trust model moved: identity still comes from `context`,
 scoring is still recomputed server-side, and the round lock still wins over any
 `team` field a client sends.
+
+---
+
+## 17 · Arenas and derived tuning
+
+Two changes borrowed from the Trapmaker prototype at
+`Documents/GitHub/reddit-game-2026` — whose gameplay core turned out to be
+byte-identical to the dead `src/game/` tree here, so the value was in its
+architecture rather than its code.
+
+### 17.1 Tuning you can actually reason about
+
+Trapmaker states the jump it *wants* and computes the physics. Clockshot had
+`GRAVITY = 1500` and `jumpVelocity = -620` — which happen to produce a 128px
+apex over 264px of ground, but nobody wrote that down, and the two numbers are
+not independent, so retuning one silently broke the other.
+
+[`tuning.ts`](src/clockshot/tuning.ts) now names the three things you can look
+at on screen and derives the rest:
+
+```ts
+const RUN_SPEED = 320;   // px/s
+const JUMP_APEX = 128;   // px — peak of a full-hold jump
+const JUMP_RANGE = 264;  // px — ground covered across the whole arc
+
+const T_APEX  = JUMP_RANGE / 2 / RUN_SPEED;
+export const GRAVITY = (2 * JUMP_APEX) / (T_APEX * T_APEX);   // 1504.5
+const JUMP_V  = (2 * JUMP_APEX) / T_APEX;                     // 620.6
+```
+
+That reproduces the shipped feel to within 0.3%, so it is a pure refactor — but
+"make the jump clear one more platform" is now a one-line edit with a
+predictable result instead of a guess followed by a playtest.
+
+### 17.2 Three arenas, one per round
+
+`PLATFORMS` / `ANCHORS` / `HAZARDS` / `RESPAWNS` / `SPAWN` were module-level
+constants. They are now fields on an `Arena` record, and there are three:
+
+| Arena | Shape | What it asks |
+|---|---|---|
+| **THE GANTRY** | 1800 × 1500 | three ground islands, two pits, a long high crossing |
+| **THE WELL** | 1100 × 2200 | one tall shaft with an unbroken floor — falling costs the climb, not a life |
+| **THE SPAN** | 2600 × 900 | wide and low, almost no floor; the fast line never touches the stepping stones |
+
+Selection is a pure function of the round index, in the same spirit as
+`roundIndexAt` — no storage, no scheduler, and every client independently
+agrees:
+
+```ts
+export const ARENA_COUNT = 3;
+export function arenaIndexAt(roundIndex: number): number {
+  let h = Math.imul(roundIndex >>> 0, 2654435761) >>> 0;
+  h ^= h >>> 15;
+  return (h >>> 0) % ARENA_COUNT;
+}
+```
+
+The server sends `arenaIndex` on `RunStartResponse` and never learns what an
+arena *is* — layout stays entirely client-side while the choice stays
+authoritative. Everyone in a round plays the same place, so scores remain
+comparable, and the menu now names it (`THE WELL · ends in 7:02 · 3 players`).
+
+### 17.3 The tests found real bugs
+
+[`tests/arena.test.ts`](tests/arena.test.ts) (37 new tests) asserts the things
+that would actually ruin a run: the spawn sits on solid ground and not in
+spikes, an anchor is in reach of the spawn *and* of every respawn, no anchor is
+stranded, hazards rest on something solid, the seeded layout rebuilds
+identically, exactly one golden clock appears, and no run can out-collect
+`RUN_CAPS`.
+
+Two findings worth recording:
+
+- **A pre-existing bug in the Gantry.** Six pickups sat inside spike strips —
+  including a fragment 22px above the tips on the mid-route platform, which had
+  been there since the arena was first authored. Collecting them meant taking
+  the hit. All six were moved clear.
+- **One test was wrong, not the arena.** The first "anchors form a chain"
+  assertion modelled a strict vertical ladder and failed the horizontal low
+  rows, which are reached from the ground rather than from another anchor. It
+  was replaced with an actual reachability flood-fill seeded from standable
+  points.
+
+**135 tests pass**, typecheck is clean on both projects, and all three arenas
+were played in a browser against the local server. The dev harness gained a
+`CLOCKSHOT_TIME_OFFSET` env var so a server can be stood up inside a specific
+round — which is how each arena was visited without waiting for its turn.

@@ -4,6 +4,8 @@ import { sfx } from '@/clockshot/sfx';
 import { activityLine, store, formatClock } from '@/clockshot/store';
 import { Button, drawTeamBar, fadeTo, layoutOf, text } from '@/clockshot/ui';
 import { api, NetError } from '@/clockshot/net';
+import { arenaAt } from '@/clockshot/arena';
+import { arenaIndexAt } from '@/shared/config';
 
 /**
  * Main menu.
@@ -153,9 +155,7 @@ export class MenuScene extends Phaser.Scene {
       this.leaderLabel.setText('DEAD LEVEL').setColor(hex(C.ink));
     }
 
-    this.roundLabel.setText(
-      `round ends in ${formatClock(store.msLeftInRound())}  ·  ${c.players} player${c.players === 1 ? '' : 's'}`,
-    );
+    this.roundLabel.setText(this.roundLine());
 
     const prev = c.previous;
     this.prevLabel.setText(
@@ -265,12 +265,27 @@ export class MenuScene extends Phaser.Scene {
     this.drawBars();
   }
 
+  /**
+   * Naming the arena is what turns "a round" into a place.
+   *
+   * It is derived from the round index, so it costs nothing to show and it is
+   * the same for everyone reading the menu right now.
+   */
+  private roundLine(): string {
+    const c = store.community;
+    if (!c) return '';
+    const arena = arenaAt(arenaIndexAt(c.roundIndex));
+    return [
+      arena.name,
+      `ends in ${formatClock(store.msLeftInRound())}`,
+      `${c.players} player${c.players === 1 ? '' : 's'}`,
+    ].join('  ·  ');
+  }
+
   update(): void {
     const c = store.community;
     if (!c) return;
-    this.roundLabel.setText(
-      `round ends in ${formatClock(store.msLeftInRound())}  ·  ${c.players} player${c.players === 1 ? '' : 's'}`,
-    );
+    this.roundLabel.setText(this.roundLine());
     // The moment a round runs out, pull the new one rather than showing 0:00.
     if (store.roundStale) void store.refreshQuietly();
   }

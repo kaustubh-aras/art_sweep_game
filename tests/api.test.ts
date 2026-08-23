@@ -19,6 +19,7 @@ const BASE = `http://127.0.0.1:${PORT}`;
 interface CallResult<T = Record<string, unknown>> {
   status: number;
   body: T;
+  headers: Headers;
 }
 
 async function call<T = Record<string, unknown>>(
@@ -34,7 +35,12 @@ async function call<T = Record<string, unknown>>(
     },
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
   });
-  return { status: res.status, body: (await res.json()) as T };
+  const text = await res.text();
+  return {
+    status: res.status,
+    body: (text ? JSON.parse(text) : {}) as T,
+    headers: res.headers,
+  };
 }
 
 /** Plays a complete, legal run and banks it. */
@@ -71,6 +77,49 @@ afterAll(() => {
 
 beforeEach(() => {
   fakeRedis.reset();
+});
+
+describe('wire format', () => {
+  /**
+   * Devvit's gateway rejects a chunked reply outright — it wants a real
+   * `Content-Length`. A plain Node server (which is what the dev harness is)
+   * accepts chunked responses happily, so this went unnoticed until the first
+   * upload failed to install. These assertions are the only thing standing
+   * between that bug and a repeat.
+   */
+  it('sends an explicit Content-Length on success', async () => {
+    const res = await call('/api/state', { as: 'alice' });
+    const len = res.headers.get('content-length');
+    expect(len).toBeTruthy();
+    expect(Number(len)).toBeGreaterThan(0);
+  });
+
+  it('sends an explicit Content-Length on failure', async () => {
+    const res = await call('/api/run/start', { method: 'POST' }); // logged out
+    expect(res.status).toBe(401);
+    expect(Number(res.headers.get('content-length'))).toBeGreaterThan(0);
+  });
+
+  it('never falls back to chunked transfer encoding', async () => {
+    const res = await call('/api/leaderboard', { as: 'alice' });
+    expect(res.headers.get('transfer-encoding')).toBeNull();
+  });
+
+  it('counts bytes, not characters, for a non-ASCII body', async () => {
+    // A username with a multi-byte character must not make the declared length
+    // disagree with what is actually on the wire.
+    const res = await call('/api/team', {
+      as: 'zoë',
+      method: 'POST',
+      body: { team: 'red' },
+    });
+    const declared = Number(res.headers.get('content-length'));
+    const board = await call('/api/leaderboard', { as: 'zoë' });
+    expect(declared).toBeGreaterThan(0);
+    expect(Number(board.headers.get('content-length'))).toBe(
+      Buffer.byteLength(JSON.stringify(board.body), 'utf8'),
+    );
+  });
 });
 
 describe('identity', () => {

@@ -30,7 +30,7 @@ import {
   startRun,
   validateTiming,
 } from './runs';
-import { RUN_MS, isTeam, otherTeam, roundIndexAt, type Team } from '../shared/config';
+import { RUN_MS, arenaIndexAt, isTeam, otherTeam, roundIndexAt, type Team } from '../shared/config';
 import type {
   ActivityItem,
   ActivityResponse,
@@ -89,9 +89,32 @@ async function readJson(req: IncomingMessage): Promise<Json> {
   }
 }
 
+/**
+ * Sends a JSON response with an explicit `Content-Length`.
+ *
+ * The length is not optional here. Without it Node falls back to chunked
+ * transfer encoding, which the Devvit gateway refuses outright:
+ *
+ *   Failed to POST to Node.js server endpoint /internal/on-app-install;
+ *   server responded with Content-Length header "null" but greater than zero
+ *   required for nonempty response
+ *
+ * That surfaced as a failed app install on the very first upload, and it would
+ * have broken every endpoint in this file the same way — the local dev harness
+ * is a plain Node server and accepts chunked replies quite happily, so nothing
+ * short of a real deploy could have caught it.
+ *
+ * The byte length has to come from a Buffer rather than `string.length`:
+ * usernames and activity lines are UTF-8, and any non-ASCII character would
+ * make a character count disagree with the bytes actually on the wire.
+ */
 function send(res: ServerResponse, status: number, body: unknown): void {
-  res.writeHead(status, { 'content-type': 'application/json' });
-  res.end(JSON.stringify(body));
+  const payload = Buffer.from(JSON.stringify(body) ?? 'null', 'utf8');
+  res.writeHead(status, {
+    'content-type': 'application/json',
+    'content-length': String(payload.byteLength),
+  });
+  res.end(payload);
 }
 
 function fail(res: ServerResponse, status: number, code: ErrorResponse['code'], message: string): void {
@@ -253,6 +276,7 @@ async function handleRunStart(res: ServerResponse): Promise<void> {
     team: run.team,
     roundIndex: run.roundIndex,
     seed: run.seed,
+    arenaIndex: arenaIndexAt(run.roundIndex),
   } satisfies RunStartResponse);
 }
 

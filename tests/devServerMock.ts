@@ -43,7 +43,17 @@ const ANON: DevContext = {
  * purpose — the shipped server has no such hook.
  */
 const realNow = Date.now.bind(Date);
-Date.now = () => realNow() + (als.getStore()?.timeOffset ?? 0);
+
+/**
+ * A whole-process clock shift, on top of the per-request one.
+ *
+ * Rounds — and therefore which arena is in play — are a pure function of the
+ * wall clock, so this is how you stand the server up inside a specific round
+ * without waiting for it. Dev harness only; the shipped server has no such hook.
+ */
+const BASE_OFFSET = Number(process.env.CLOCKSHOT_TIME_OFFSET ?? 0) || 0;
+
+Date.now = () => realNow() + BASE_OFFSET + (als.getStore()?.timeOffset ?? 0);
 
 /** Reads whichever user this request is acting as. */
 export const context = new Proxy({} as Record<string, unknown>, {

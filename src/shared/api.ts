@@ -121,6 +121,14 @@ export interface RunStartResponse {
   roundIndex: number;
   /** Seed so the arena layout is identical if the player refreshes mid-run. */
   seed: number;
+  /**
+   * Which arena this round is played in.
+   *
+   * Derived from the round index, so everybody playing right now is in the same
+   * place and their scores are comparable. The server picks the number; the
+   * client owns what that number looks like.
+   */
+  arenaIndex: number;
 }
 
 export interface RunFinishRequest {

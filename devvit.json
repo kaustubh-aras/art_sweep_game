@@ -1,6 +1,6 @@
 {
   "$schema": "https://developers.reddit.com/schema/config-file.v1.json",
-  "name": "clockshot",
+  "name": "clockshot-game",
   "post": {
     "dir": "dist/client",
     "entrypoints": {
@@ -45,5 +45,8 @@
   "scripts": {
     "dev": "npm run build:watch",
     "build": "npm run build"
+  },
+  "dev": {
+    "subreddit": "clockshot_game_dev"
   }
 }

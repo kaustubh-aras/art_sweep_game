@@ -7,17 +7,52 @@
  * simulates rope.
  */
 
-export const GRAVITY = 1500;
+/* -------------------------------------------------------------------------- */
+/* Jump: state the shape you want, derive the physics                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Tune these three. Everything below them is arithmetic.
+ *
+ * Gravity and jump velocity are not independent knobs — they are two views of
+ * the same arc, and picking them by hand means every retune is a guess followed
+ * by a playtest. Saying "the jump clears 128px and covers 264px at run speed"
+ * describes something you can actually look at on screen and check against the
+ * arena, and the numbers that produce it fall out.
+ *
+ * All distances are world pixels, which is what the arena in `arena.ts` is
+ * authored in. For reference: the player is 38px tall and a platform is 24-28px.
+ */
+const RUN_SPEED = 320;
+/** Peak height of a full-hold jump. Roughly three and a bit player-heights. */
+const JUMP_APEX = 128;
+/** Horizontal distance covered across the whole arc while running flat out. */
+const JUMP_RANGE = 264;
+
+/** Time from leaving the ground to the top of the arc. */
+const T_APEX = JUMP_RANGE / 2 / RUN_SPEED;
+
+/**
+ * Downward acceleration, in px/s^2.
+ *
+ * Also handed to Arcade Physics in `game.ts`, so it is the gravity for
+ * everything in the world, not just the player.
+ */
+export const GRAVITY = (2 * JUMP_APEX) / (T_APEX * T_APEX);
+
+/** Upward launch speed that reaches exactly `JUMP_APEX` under `GRAVITY`. */
+const JUMP_V = (2 * JUMP_APEX) / T_APEX;
 
 export const MOVE = {
   /** Ground run speed. */
-  speed: 320,
+  speed: RUN_SPEED,
   /** How fast the player reaches full speed on the ground, and in the air. */
   groundAccel: 2600,
   airAccel: 1200,
   groundDrag: 1900,
   airDrag: 260,
-  jumpVelocity: -620,
+  /** Negative because screen y grows downward. */
+  jumpVelocity: -JUMP_V,
   /** Jump still fires this long after walking off an edge. */
   coyoteMs: 110,
   /** A jump pressed this long before landing still fires on touchdown. */

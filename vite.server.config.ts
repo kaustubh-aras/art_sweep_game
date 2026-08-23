@@ -11,6 +11,10 @@ const nodeBuiltins = [...builtinModules, ...builtinModules.map((m) => `node:${m}
  * chunk.
  */
 export default defineConfig({
+  // Nothing in `public/` belongs in the server bundle. Without this, Vite's
+  // default public-dir copy drops the old Trapmaker level JSON into
+  // `dist/server/levels/` and it gets uploaded to Reddit with the app.
+  publicDir: false,
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },

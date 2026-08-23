@@ -84,6 +84,27 @@ export function otherTeam(t: Team): Team {
   return t === 'red' ? 'blue' : 'red';
 }
 
+/**
+ * How many arenas the client ships. The server does not know what an arena
+ * *is* — it only picks a number — so layout stays entirely client-side while
+ * the choice stays authoritative.
+ */
+export const ARENA_COUNT = 3;
+
+/**
+ * Which arena a round is played in.
+ *
+ * A pure function of the round index, exactly like `roundIndexAt`: no storage,
+ * no scheduler, and every player in a round independently agrees on the answer.
+ * The multiply-xor is a cheap integer hash so consecutive rounds do not simply
+ * cycle 0, 1, 2, 0 — which would be learnable and dull.
+ */
+export function arenaIndexAt(roundIndex: number): number {
+  let h = Math.imul(roundIndex >>> 0, 2654435761) >>> 0;
+  h ^= h >>> 15;
+  return (h >>> 0) % ARENA_COUNT;
+}
+
 /** The round index for a moment in time. Rounds tile the epoch with no gaps. */
 export function roundIndexAt(nowMs: number): number {
   return Math.floor(nowMs / ROUND_MS);

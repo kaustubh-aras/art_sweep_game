@@ -1,14 +1,10 @@
 import Phaser from 'phaser';
 import {
-  ANCHORS,
-  HAZARDS,
-  KILL_Y,
-  PLATFORMS,
-  RESPAWNS,
-  SPAWN,
-  WORLD,
+  arenaAt,
   buildLayout,
   centreOf,
+  killYOf,
+  type Arena,
   type Pickup,
   type PickupKind,
   type Rect,
@@ -47,6 +43,9 @@ export class PlayScene extends Phaser.Scene {
   private run!: RunStartResponse;
   /** Null on a first run: the side is chosen on the results screen. */
   private team!: Team | null;
+  /** The place this round is played in. Chosen by the server, drawn here. */
+  private arena!: Arena;
+  private killY = 0;
 
   private player!: Player;
   private controls!: Controls;
@@ -90,6 +89,8 @@ export class PlayScene extends Phaser.Scene {
   init(data: { run: RunStartResponse }): void {
     this.run = data.run;
     this.team = data.run.team;
+    this.arena = arenaAt(data.run.arenaIndex);
+    this.killY = killYOf(this.arena);
     this.tally = { ...EMPTY_TALLY };
     this.collected = 0;
     this.stolen = 0;
@@ -105,9 +106,10 @@ export class PlayScene extends Phaser.Scene {
   create(): void {
     bakeTextures(this);
 
-    this.physics.world.setBounds(0, 0, WORLD.width, WORLD.height);
+    const { width, height } = this.arena.world;
+    this.physics.world.setBounds(0, 0, width, height);
     this.physics.world.gravity.y = GRAVITY;
-    this.cameras.main.setBounds(0, 0, WORLD.width, WORLD.height);
+    this.cameras.main.setBounds(0, 0, width, height);
     this.cameras.main.setBackgroundColor(C.bg);
 
     this.drawBackdrop();
@@ -115,12 +117,12 @@ export class PlayScene extends Phaser.Scene {
     this.buildHazards();
     this.buildAnchors();
 
-    const layout = buildLayout(this.run.seed);
+    const layout = buildLayout(this.arena, this.run.seed);
     this.buildPickups(layout.pickups);
 
     this.rope = this.add.graphics().setDepth(18);
 
-    this.player = new Player(this, SPAWN.x, SPAWN.y, this.team);
+    this.player = new Player(this, this.arena.spawn.x, this.arena.spawn.y, this.team);
     this.physics.add.collider(this.player.sprite, this.platforms);
 
     this.buildEnemies(layout.patrols);
@@ -148,24 +150,25 @@ export class PlayScene extends Phaser.Scene {
 
   /** Parallax grid, so speed is legible against an otherwise empty void. */
   private drawBackdrop(): void {
+    const { width, height } = this.arena.world;
     const g = this.add.graphics().setDepth(-10);
     g.lineStyle(1, C.grid, 0.55);
-    for (let x = 0; x <= WORLD.width; x += 120) g.lineBetween(x, 0, x, WORLD.height);
-    for (let y = 0; y <= WORLD.height; y += 120) g.lineBetween(0, y, WORLD.width, y);
+    for (let x = 0; x <= width; x += 120) g.lineBetween(x, 0, x, height);
+    for (let y = 0; y <= height; y += 120) g.lineBetween(0, y, width, y);
     g.setScrollFactor(0.35);
 
     // A horizon glow in the team's colour keeps whose fight this is on screen.
     // A player who has not chosen yet gets the neutral rope colour instead.
     const glow = this.add.graphics().setDepth(-9).setScrollFactor(0.5);
     glow.fillStyle(this.team ? teamColor(this.team) : C.cyan, 0.05);
-    glow.fillRect(0, WORLD.height - 420, WORLD.width, 420);
+    glow.fillRect(0, height - 420, width, 420);
   }
 
   private buildPlatforms(): void {
     this.platforms = this.physics.add.staticGroup();
     const g = this.add.graphics().setDepth(4);
 
-    for (const r of PLATFORMS) {
+    for (const r of this.arena.platforms) {
       const c = centreOf(r);
       const body = this.add.rectangle(c.x, c.y, r.w, r.h);
       this.physics.add.existing(body, true);
@@ -183,7 +186,7 @@ export class PlayScene extends Phaser.Scene {
     this.hazards = this.physics.add.staticGroup();
     const g = this.add.graphics().setDepth(5);
 
-    for (const r of HAZARDS) {
+    for (const r of this.arena.hazards) {
       const c = centreOf(r);
       const body = this.add.rectangle(c.x, c.y, r.w, r.h);
       this.physics.add.existing(body, true);
@@ -205,7 +208,7 @@ export class PlayScene extends Phaser.Scene {
   }
 
   private buildAnchors(): void {
-    for (const a of ANCHORS) {
+    for (const a of this.arena.anchors) {
       const img = this.add.image(a.x, a.y, TEX.anchor).setDepth(6);
       this.anchorSprites.push(img);
     }
@@ -466,9 +469,9 @@ export class PlayScene extends Phaser.Scene {
     this.cameras.main.flash(160, 40, 60, 110);
 
     // Come back at the safe point nearest to where they went over.
-    let best = RESPAWNS[0]!;
+    let best = this.arena.respawns[0]!;
     let bestD = Infinity;
-    for (const r of RESPAWNS) {
+    for (const r of this.arena.respawns) {
       const d = Math.abs(r.x - this.player.x);
       if (d < bestD) {
         bestD = d;
@@ -552,13 +555,13 @@ export class PlayScene extends Phaser.Scene {
     }
 
     const intent = this.finished ? NO_INTENT : this.controls.read();
-    this.player.update(delta, intent, ANCHORS);
+    this.player.update(delta, intent, this.arena.anchors);
 
     this.updateEnemies(delta);
     this.drawRope();
     this.highlightAnchor();
 
-    if (this.player.y > KILL_Y) this.onFall();
+    if (this.player.y > this.killY) this.onFall();
 
     this.hudTimer.setText((remaining / 1000).toFixed(1));
     this.drawHudRing(remaining);
@@ -624,10 +627,12 @@ export class PlayScene extends Phaser.Scene {
 
   /** Shows which anchor a grapple would take, so the auto-aim is never a guess. */
   private highlightAnchor(): void {
-    const target = this.player.attached ? this.player.anchor : this.player.findAnchor(ANCHORS);
+    const target = this.player.attached
+      ? this.player.anchor
+      : this.player.findAnchor(this.arena.anchors);
     for (let i = 0; i < this.anchorSprites.length; i++) {
       const img = this.anchorSprites[i]!;
-      const a = ANCHORS[i]!;
+      const a = this.arena.anchors[i]!;
       const isTarget = target !== null && a.x === target.x && a.y === target.y;
       img.setScale(isTarget ? 1.35 : 1);
       img.setAlpha(isTarget ? 1 : 0.55);
