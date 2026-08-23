@@ -990,13 +990,39 @@ Two different `x-dev-user` values share one world, which is how you exercise the
 community layer — the banks, the leaderboard, the feed and the lead-change
 announcement — from a single machine.
 
-**Note:** `npm run dev` (plain Vite on :5173) serves the client but **not**
-`/api/*`, so the game stalls on the boot screen. Use the dev server above, or add
-a proxy to `vite.config.ts`:
+### The DISCONNECTED trap
 
-```ts
-server: { proxy: { '/api': 'http://localhost:39700' } }
+`npm run dev` (plain Vite on :5173) serves the client but has no `/api/*` route,
+so Vite's SPA fallback answers `/api/state` with **HTTP 200 and a page of HTML**.
+`res.json()` then throws in `net.ts`, `BootScene` catches it, and the game boots
+straight into the **DISCONNECTED** screen. It reads as a network fault and is
+really a missing route — reproducible in one command:
+
 ```
+$ curl -s -o /dev/null -w '%{http_code} %{content_type}' http://localhost:5173/api/state
+200 text/html          # ← not JSON
+```
+
+`vite.config.ts` now proxies `/api` and `/internal` to `localhost:39700`, so
+`npm run dev` works — **as long as `node dist/devserver/index.cjs` is running
+alongside it**. To play with only one process, skip Vite and use the dev server
+on its own, as above.
+
+### Letting someone else play
+
+The dev server listens on `0.0.0.0`, so anyone on the same WiFi can reach it at
+`http://<your-LAN-IP>:39700/`. Two things have to be true:
+
+- **Windows Firewall** must allow inbound on the *active* network profile. Check
+  with `Get-NetConnectionProfile` (which profile the WiFi is in) and confirm
+  there is an enabled inbound Allow rule for `node.exe` scoped to that profile.
+- They must be on the **same network**. Nothing here is reachable from the wider
+  internet; for that you need a tunnel, or a real `devvit playtest`.
+
+Everyone shares one in-memory world, and identity comes from the `x-dev-user`
+header — which a browser never sends, so **every browser plays as `devplayer`**.
+Two people on the dev server are the same account. Use `CLOCKSHOT_USER` to run a
+second server as a different player, or use `devvit playtest` for real accounts.
 
 **Verified end to end** on this machine: boot → menu (live banks) → team select →
 30-second run (movement, jump, grapple with rope + anchor highlight, fire, pickup

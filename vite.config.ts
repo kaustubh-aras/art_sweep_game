@@ -22,5 +22,22 @@ export default defineConfig({
     port: 5173,
     open: true,
     host: true, // expose on LAN so a phone on the same WiFi can connect
+    /**
+     * Send the API to the local dev server.
+     *
+     * Without this, Vite answers `/api/state` with its own SPA fallback — HTTP
+     * 200 and a page of HTML — so `res.json()` throws in `net.ts` and the game
+     * boots straight into the DISCONNECTED screen. It looks like a network
+     * fault and is really a missing route, which is a genuinely confusing first
+     * five minutes for anyone who cloned the repo and ran `npm run dev`.
+     *
+     * This needs `node dist/devserver/index.cjs` running alongside. To play
+     * without a second process, skip Vite entirely: the dev server serves the
+     * built client and the API on one origin (see the README).
+     */
+    proxy: {
+      '/api': { target: 'http://localhost:39700', changeOrigin: true },
+      '/internal': { target: 'http://localhost:39700', changeOrigin: true },
+    },
   },
 });
