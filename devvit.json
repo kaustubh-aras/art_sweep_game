@@ -1,0 +1,49 @@
+{
+  "$schema": "https://developers.reddit.com/schema/config-file.v1.json",
+  "name": "clockshot",
+  "post": {
+    "dir": "dist/client",
+    "entrypoints": {
+      "default": {
+        "entry": "index.html",
+        "height": "tall",
+        "styles": {
+          "backgroundColor": "#070B16FF",
+          "backgroundColorDark": "#070B16FF"
+        }
+      }
+    }
+  },
+  "server": {
+    "dir": "dist/server",
+    "entry": "index.cjs"
+  },
+  "menu": {
+    "items": [
+      {
+        "label": "Create a Clockshot post",
+        "description": "Start a Clockshot community time war in this subreddit.",
+        "location": "subreddit",
+        "forUserType": "moderator",
+        "endpoint": "/internal/menu/create-post"
+      }
+    ]
+  },
+  "triggers": {
+    "onAppInstall": "/internal/on-app-install"
+  },
+  "permissions": {
+    "reddit": true,
+    "redis": true,
+    "http": {
+      "enable": false
+    }
+  },
+  "marketingAssets": {
+    "icon": "assets/icon.png"
+  },
+  "scripts": {
+    "dev": "npm run build:watch",
+    "build": "npm run build"
+  }
+}

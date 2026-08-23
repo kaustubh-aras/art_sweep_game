@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell($env:Path = [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"Machine\"\\) + \";\" + [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"User\"\\); npm approve-scripts esbuild 2>&1 | Out-String; Write-Output \"--- rebuild esbuild ---\"; npm rebuild esbuild 2>&1 | Out-String)",
+      "PowerShell($env:Path = [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"Machine\"\\) + \";\" + [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"User\"\\); npm run build 2>&1 | Out-String)",
+      "PowerShell($env:Path = [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"Machine\"\\) + \";\" + [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"User\"\\); npm run dev)",
+      "PowerShell($env:Path = [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"Machine\"\\) + \";\" + [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"User\"\\); npm install -g devvit 2>&1 | Select-Object -Last 8; Write-Output \"--- version ---\"; devvit --version 2>&1 | Out-String)",
+      "PowerShell($env:Path = [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"Machine\"\\) + \";\" + [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"User\"\\); npm install -g --allow-scripts=esbuild,protobufjs devvit 2>&1 | Select-Object -Last 6; Write-Output \"--- verify ---\"; devvit --version)",
+      "PowerShell($env:Path = [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"Machine\"\\) + \";\" + [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"User\"\\); Write-Output \"=== whoami ===\"; devvit whoami 2>&1 | Out-String; Write-Output \"=== new --help ===\"; devvit new --help 2>&1 | Out-String)",
+      "Skill(run)",
+      "Skill(run:*)"
+    ]
+  }
+}
