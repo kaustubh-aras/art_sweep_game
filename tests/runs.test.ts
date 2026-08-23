@@ -111,10 +111,18 @@ describe('run timing (server clock only)', () => {
     expect(validateTiming(run, run.startedAt + RUN_MS + 2000, 3).ok).toBe(true);
   });
 
-  it('rejects a run submitted impossibly early', () => {
+  it('holds an early run rather than voiding it', () => {
     const v = validateTiming(run, run.startedAt + 3000, 3);
     expect(v.ok).toBe(false);
-    if (!v.ok) expect(v.code).toBe('run_expired');
+    // Distinct from `run_expired` on purpose: an early submit is recoverable,
+    // so the caller must keep the run and let the player ask again.
+    if (!v.ok) expect(v.code).toBe('too_early');
+  });
+
+  it('tells an early run how long it still has to wait', () => {
+    const v = validateTiming(run, run.startedAt + 3000, 3);
+    expect(v.ok).toBe(false);
+    if (!v.ok && v.code === 'too_early') expect(v.retryInMs).toBe(RUN_MS - 3000);
   });
 
   it('rejects a run that came back far too late', () => {
@@ -207,14 +215,17 @@ describe('scoring (the server decides what a run was worth)', () => {
     );
   });
 
-  it('subtracts hazard and fall penalties', () => {
+  it('does not charge for hazards or falls', () => {
+    // Getting hit costs the run clock, not the seconds already collected.
     const { awarded } = scoreRun(tally({ fragments: 10, hazardHits: 2, falls: 1 }));
-    expect(awarded).toBe(10 - 2 * SCORE.hazardPenalty - SCORE.fallPenalty);
+    expect(awarded).toBe(10);
   });
 
-  it('never returns a negative award', () => {
+  it('lets a player who died repeatedly still keep what they collected', () => {
+    // The old scoring floored this whole run at zero, which is the worst thing
+    // a thirty-second game can tell somebody on their first try.
     const { awarded } = scoreRun(tally({ fragments: 1, hazardHits: 20, falls: 20 }));
-    expect(awarded).toBe(0);
+    expect(awarded).toBe(1);
   });
 
   it('counts enemy fragments as stolen, not gained', () => {

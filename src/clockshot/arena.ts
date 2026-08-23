@@ -32,7 +32,14 @@ export interface Patrol {
   speed: number;
 }
 
-export type PickupKind = 'fragment' | 'large' | 'golden' | 'enemy';
+/**
+ * Two rewards, not three.
+ *
+ * `fragment` is the bread of the arena and `golden` is the one detour worth
+ * breaking your line for. A middle tier only ever read as "a slightly bigger
+ * clock", which is a distinction with no decision attached to it.
+ */
+export type PickupKind = 'fragment' | 'golden' | 'enemy';
 
 export interface Pickup {
   x: number;
@@ -100,7 +107,10 @@ export const ANCHORS: readonly Anchor[] = [
 
 /** Spike strips. Visible, on top of solid ground, never in a blind landing. */
 export const HAZARDS: readonly Rect[] = [
-  { x: 300, y: 1348, w: 130, h: 32 },
+  // Nothing on the spawn island. A new player used to meet their first spike
+  // strip 140px from the spawn point — 0.44s of walking right — which taught
+  // punishment before it had taught a single verb. The island is now a place
+  // to run, collect, and find the rope.
   { x: 900, y: 1348, w: 110, h: 32 },
   { x: 1520, y: 1348, w: 150, h: 32 },
   { x: 560, y: 972, w: 120, h: 28 },
@@ -134,6 +144,16 @@ export function rng(seed: number): () => number {
 
 /** Fragment trails, laid along the routes worth taking. */
 const TRAILS: readonly Anchor[][] = [
+  // The opening. Flat ground, no hazard, five clocks in a row: the first thing
+  // a new player does is run right and score, and the trail walks them to the
+  // edge of the first pit where the low anchor is already in grapple range.
+  [
+    { x: 240, y: 1330 },
+    { x: 310, y: 1330 },
+    { x: 380, y: 1330 },
+    { x: 450, y: 1320 },
+    { x: 505, y: 1290 },
+  ],
   // Arc across the first pit — only reachable on a swing.
   [
     { x: 540, y: 1200 },
@@ -193,8 +213,9 @@ export function buildLayout(seed: number): ArenaLayout {
     for (const p of trail) pickups.push({ x: p.x, y: p.y, kind: 'fragment' });
   }
 
-  // Large fragments sit slightly off the safe line.
-  const largeSlots: Anchor[] = [
+  // Fragments slightly off the safe line: worth a small detour, never a
+  // separate thing to learn.
+  const offLineSlots: Anchor[] = [
     { x: 660, y: 900 },
     { x: 1350, y: 700 },
     { x: 145, y: 300 },
@@ -202,8 +223,8 @@ export function buildLayout(seed: number): ArenaLayout {
     { x: 860, y: 560 },
     { x: 400, y: 620 },
   ];
-  for (const slot of largeSlots) {
-    if (rand() < 0.75) pickups.push({ ...slot, kind: 'large' });
+  for (const slot of offLineSlots) {
+    if (rand() < 0.75) pickups.push({ ...slot, kind: 'fragment' });
   }
 
   // One golden clock per run, high and central, always worth the detour.

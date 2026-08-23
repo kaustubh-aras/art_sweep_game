@@ -14,7 +14,7 @@ import {
   type Rect,
 } from '@/clockshot/arena';
 import { C, FONT, hex, teamColor } from '@/clockshot/theme';
-import { COMBAT, GRAVITY, WARNING_MS } from '@/clockshot/tuning';
+import { GRAVITY, WARNING_MS } from '@/clockshot/tuning';
 import { TEX, bakeTextures } from '@/clockshot/textures';
 import { Controls } from '@/clockshot/controls';
 import { NO_INTENT, Player } from '@/clockshot/player';
@@ -29,8 +29,6 @@ interface EnemyData {
   to: number;
   speed: number;
   dir: 1 | -1;
-  alive: boolean;
-  flashUntil: number;
 }
 
 type EnemySprite = Phaser.Physics.Arcade.Sprite & { cs: EnemyData };
@@ -47,7 +45,8 @@ type PickupSprite = Phaser.Physics.Arcade.Sprite & { kind: PickupKind; taken: bo
  */
 export class PlayScene extends Phaser.Scene {
   private run!: RunStartResponse;
-  private team!: Team;
+  /** Null on a first run: the side is chosen on the results screen. */
+  private team!: Team | null;
 
   private player!: Player;
   private controls!: Controls;
@@ -55,7 +54,6 @@ export class PlayScene extends Phaser.Scene {
   private hazards!: Phaser.Physics.Arcade.StaticGroup;
   private pickups!: Phaser.Physics.Arcade.Group;
   private enemies!: Phaser.Physics.Arcade.Group;
-  private bullets!: Phaser.Physics.Arcade.Group;
 
   private rope!: Phaser.GameObjects.Graphics;
   private anchorSprites: Phaser.GameObjects.Image[] = [];
@@ -65,7 +63,6 @@ export class PlayScene extends Phaser.Scene {
   private collected = 0;
   private stolen = 0;
   private streak = 0;
-  private lastFireAt = 0;
   private finished = false;
   private lastTickSecond = -1;
 
@@ -127,7 +124,6 @@ export class PlayScene extends Phaser.Scene {
     this.physics.add.collider(this.player.sprite, this.platforms);
 
     this.buildEnemies(layout.patrols);
-    this.buildBullets();
     this.buildParticles();
 
     this.physics.add.overlap(this.player.sprite, this.pickups, (_p, obj) =>
@@ -135,9 +131,6 @@ export class PlayScene extends Phaser.Scene {
     );
     this.physics.add.overlap(this.player.sprite, this.hazards, () => this.onHazard());
     this.physics.add.overlap(this.player.sprite, this.enemies, () => this.onHazard());
-    this.physics.add.overlap(this.bullets, this.enemies, (b, e) =>
-      this.onBulletHit(b as Phaser.Physics.Arcade.Sprite, e as EnemySprite),
-    );
 
     this.cameras.main.startFollow(this.player.sprite, true, 0.11, 0.11);
 
@@ -162,8 +155,9 @@ export class PlayScene extends Phaser.Scene {
     g.setScrollFactor(0.35);
 
     // A horizon glow in the team's colour keeps whose fight this is on screen.
+    // A player who has not chosen yet gets the neutral rope colour instead.
     const glow = this.add.graphics().setDepth(-9).setScrollFactor(0.5);
-    glow.fillStyle(teamColor(this.team), 0.05);
+    glow.fillStyle(this.team ? teamColor(this.team) : C.cyan, 0.05);
     glow.fillRect(0, WORLD.height - 420, WORLD.width, 420);
   }
 
@@ -222,7 +216,6 @@ export class PlayScene extends Phaser.Scene {
 
     const texFor: Record<PickupKind, string> = {
       fragment: TEX.fragment,
-      large: TEX.large,
       golden: TEX.golden,
       enemy: TEX.enemyFrag,
     };
@@ -255,21 +248,8 @@ export class PlayScene extends Phaser.Scene {
       const e = this.enemies.create(p.x, p.y, TEX.enemy) as EnemySprite;
       e.setDepth(12);
       (e.body as Phaser.Physics.Arcade.Body).setAllowGravity(false);
-      e.cs = { from: p.from, to: p.to, speed: p.speed, dir: 1, alive: true, flashUntil: 0 };
+      e.cs = { from: p.from, to: p.to, speed: p.speed, dir: 1 };
       e.setVelocityX(p.speed);
-    }
-  }
-
-  /** A fixed pool — bullets are recycled, never allocated mid-run. */
-  private buildBullets(): void {
-    this.bullets = this.physics.add.group({
-      allowGravity: false,
-      maxSize: COMBAT.poolSize,
-    });
-    for (let i = 0; i < COMBAT.poolSize; i++) {
-      const b = this.bullets.create(-999, -999, TEX.bullet) as Phaser.Physics.Arcade.Sprite;
-      b.setActive(false).setVisible(false).setDepth(14);
-      (b.body as Phaser.Physics.Arcade.Body).setAllowGravity(false);
     }
   }
 
@@ -416,7 +396,6 @@ export class PlayScene extends Phaser.Scene {
 
     const colorByKind: Record<PickupKind, number> = {
       fragment: C.gold,
-      large: C.gold,
       golden: C.gold,
       enemy: C.danger,
     };
@@ -427,12 +406,6 @@ export class PlayScene extends Phaser.Scene {
         this.collected += SCORE.fragment;
         this.streak++;
         sfx.collect(this.streak);
-        break;
-      case 'large':
-        this.tally.largeFragments++;
-        this.collected += SCORE.largeFragment;
-        this.streak++;
-        sfx.collectLarge();
         break;
       case 'golden':
         this.tally.goldenClocks++;
@@ -463,32 +436,34 @@ export class PlayScene extends Phaser.Scene {
     this.updateHudText();
   }
 
+  /**
+   * Getting hit costs time, not seconds.
+   *
+   * The knockback, the i-frames and the ruined line are the punishment: they
+   * spend the run's scarcest resource, which is the clock. Taking banked
+   * seconds away as well is what let a beginner finish a whole run on zero —
+   * the single worst thing this game could tell a new player.
+   */
   private onHazard(): void {
     if (this.finished) return;
     if (!this.player.takeHit()) return;
 
-    this.tally.hazardHits++;
-    this.collected = Math.max(0, this.collected - SCORE.hazardPenalty);
     this.streak = 0;
     sfx.hurt();
     this.cameras.main.shake(220, 0.011);
     this.cameras.main.flash(120, 255, 90, 61);
-    this.flashMessage(`-${SCORE.hazardPenalty}s`, C.danger);
 
     // Knock the player clear so they cannot sit inside a spike strip.
     this.player.body.velocity.y = -420;
     this.player.body.velocity.x = this.player.facing * -260;
-    this.updateHudText();
   }
 
+  /** Falling costs the walk back, and nothing else. */
   private onFall(): void {
     if (this.finished) return;
-    this.tally.falls++;
-    this.collected = Math.max(0, this.collected - SCORE.fallPenalty);
     this.streak = 0;
     sfx.fall();
     this.cameras.main.flash(160, 40, 60, 110);
-    this.flashMessage(`-${SCORE.fallPenalty}s`, C.danger);
 
     // Come back at the safe point nearest to where they went over.
     let best = RESPAWNS[0]!;
@@ -501,30 +476,6 @@ export class PlayScene extends Phaser.Scene {
       }
     }
     this.player.respawn(best);
-    this.updateHudText();
-  }
-
-  private onBulletHit(b: Phaser.Physics.Arcade.Sprite, e: EnemySprite): void {
-    if (!b.active || !e.active || !e.cs.alive) return;
-    this.killBullet(b);
-
-    e.cs.alive = false;
-    this.tally.enemyKills++;
-    this.collected += SCORE.enemyKill;
-    sfx.enemyHit();
-    this.cameras.main.shake(140, 0.007);
-    this.burst(e.x, e.y, C.danger, 18);
-    this.popNumber(e.x, e.y, 'kill');
-
-    e.setTint(0xffffff);
-    this.tweens.add({
-      targets: e,
-      scale: 1.6,
-      alpha: 0,
-      duration: 190,
-      onComplete: () => e.destroy(),
-    });
-    this.updateHudText();
   }
 
   /* ---------------------------------------------------------------------- */
@@ -536,17 +487,13 @@ export class PlayScene extends Phaser.Scene {
     this.particles.emitParticleAt(x, y, count);
   }
 
-  private popNumber(x: number, y: number, kind: PickupKind | 'kill'): void {
+  private popNumber(x: number, y: number, kind: PickupKind): void {
     const value =
       kind === 'fragment'
         ? `+${SCORE.fragment}`
-        : kind === 'large'
-          ? `+${SCORE.largeFragment}`
-          : kind === 'golden'
-            ? `+${SCORE.goldenClock}`
-            : kind === 'kill'
-              ? `+${SCORE.enemyKill}`
-              : `-${SCORE.enemyFragment}`;
+        : kind === 'golden'
+          ? `+${SCORE.goldenClock}`
+          : `-${SCORE.enemyFragment}`;
     const color = kind === 'enemy' ? C.danger : C.gold;
 
     const t = this.add
@@ -587,50 +534,6 @@ export class PlayScene extends Phaser.Scene {
   }
 
   /* ---------------------------------------------------------------------- */
-  /* Combat                                                                  */
-  /* ---------------------------------------------------------------------- */
-
-  private fire(): void {
-    const now = this.time.now;
-    if (now - this.lastFireAt < COMBAT.fireCooldownMs) return;
-
-    const b = this.bullets.getFirstDead(false) as Phaser.Physics.Arcade.Sprite | null;
-    if (!b) return;
-    this.lastFireAt = now;
-
-    // Aim at the nearest enemy roughly in front; otherwise straight ahead.
-    let angle = this.player.facing > 0 ? 0 : Math.PI;
-    let best = Infinity;
-    for (const obj of this.enemies.getChildren()) {
-      const e = obj as EnemySprite;
-      if (!e.active || !e.cs.alive) continue;
-      const d = Phaser.Math.Distance.Between(this.player.x, this.player.y, e.x, e.y);
-      if (d > COMBAT.autoAimRange || d > best) continue;
-      const a = Math.atan2(e.y - this.player.y, e.x - this.player.x);
-      const facingA = this.player.facing > 0 ? 0 : Math.PI;
-      if (Math.abs(Phaser.Math.Angle.Wrap(a - facingA)) <= COMBAT.autoAimRadians) {
-        best = d;
-        angle = a;
-      }
-    }
-
-    b.setActive(true).setVisible(true);
-    b.setPosition(this.player.x + Math.cos(angle) * 20, this.player.y + Math.sin(angle) * 20);
-    const body = b.body as Phaser.Physics.Arcade.Body;
-    body.setAllowGravity(false);
-    body.setVelocity(Math.cos(angle) * COMBAT.bulletSpeed, Math.sin(angle) * COMBAT.bulletSpeed);
-    b.setData('dieAt', now + COMBAT.bulletLifeMs);
-
-    sfx.shoot();
-  }
-
-  private killBullet(b: Phaser.Physics.Arcade.Sprite): void {
-    b.setActive(false).setVisible(false);
-    (b.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
-    b.setPosition(-999, -999);
-  }
-
-  /* ---------------------------------------------------------------------- */
   /* Frame                                                                   */
   /* ---------------------------------------------------------------------- */
 
@@ -650,10 +553,8 @@ export class PlayScene extends Phaser.Scene {
 
     const intent = this.finished ? NO_INTENT : this.controls.read();
     this.player.update(delta, intent, ANCHORS);
-    if (intent.fire) this.fire();
 
     this.updateEnemies(delta);
-    this.updateBullets();
     this.drawRope();
     this.highlightAnchor();
 
@@ -676,7 +577,7 @@ export class PlayScene extends Phaser.Scene {
   private updateEnemies(delta: number): void {
     for (const obj of this.enemies.getChildren()) {
       const e = obj as EnemySprite;
-      if (!e.active || !e.cs.alive) continue;
+      if (!e.active) continue;
       const d = e.cs;
       if (e.x <= d.from && d.dir === -1) {
         d.dir = 1;
@@ -688,18 +589,6 @@ export class PlayScene extends Phaser.Scene {
       e.setFlipX(d.dir < 0);
       // A slow wobble so a patrol never looks like a sliding decal.
       e.setAngle(e.angle + (delta / 1000) * 40 * d.dir);
-    }
-  }
-
-  private updateBullets(): void {
-    const now = this.time.now;
-    for (const obj of this.bullets.getChildren()) {
-      const b = obj as Phaser.Physics.Arcade.Sprite;
-      if (!b.active) continue;
-      const dieAt = b.getData('dieAt') as number | undefined;
-      const out =
-        b.x < -50 || b.x > WORLD.width + 50 || b.y < -50 || b.y > WORLD.height + 50;
-      if (out || (dieAt !== undefined && now > dieAt)) this.killBullet(b);
     }
   }
 
@@ -745,12 +634,17 @@ export class PlayScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * One number, not two.
+   *
+   * Seconds collected and seconds stolen do different things to the two banks,
+   * but they do the same thing to the only question a player is asking mid-run
+   * — "is my team better off?" — so they are shown as a single total. The split
+   * still exists on the wire and on the server; it just is not a thing anyone
+   * has to hold in their head while swinging.
+   */
   private updateHudText(): void {
-    // Stolen seconds never join the player's own total — they come off the
-    // other team — so they are reported separately rather than added in.
-    this.hudScore.setText(
-      this.stolen > 0 ? `+${this.collected}s   -${this.stolen}s them` : `+${this.collected}s`,
-    );
+    this.hudScore.setText(`+${this.collected + this.stolen}s`);
   }
 
   /* ---------------------------------------------------------------------- */

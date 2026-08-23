@@ -25,7 +25,15 @@ export interface ActiveRun {
   runId: string;
   startedAt: number;
   roundIndex: number;
-  team: Team;
+  /**
+   * Null when the run began before the player had picked a side.
+   *
+   * A first-time player takes their run first and chooses who gets the seconds
+   * afterwards, so the team arrives with the submission rather than gating the
+   * start. Nothing about the trust model changes: the choice is still recorded
+   * server-side, and the round lock still applies.
+   */
+  team: Team | null;
   seed: number;
 }
 
@@ -47,12 +55,13 @@ export async function readActiveRun(userId: string): Promise<ActiveRun | null> {
   const roundIndex = Number(raw.roundIndex);
   const seed = Number(raw.seed);
   if (!Number.isFinite(startedAt) || !Number.isFinite(roundIndex)) return null;
-  if (!isTeam(raw.team)) return null;
   return {
     runId: raw.runId,
     startedAt,
     roundIndex,
-    team: raw.team,
+    // An empty string is how "no side yet" is stored; anything unrecognised is
+    // treated the same way rather than voiding an otherwise valid run.
+    team: isTeam(raw.team) ? raw.team : null,
     seed: Number.isFinite(seed) ? seed : 1,
   };
 }
@@ -67,7 +76,7 @@ export async function readActiveRun(userId: string): Promise<ActiveRun | null> {
  */
 export async function startRun(
   userId: string,
-  team: Team,
+  team: Team | null,
   roundIndex: number,
   nowMs: number,
 ): Promise<{ run: ActiveRun; resumed: boolean }> {
@@ -94,7 +103,7 @@ export async function startRun(
     runId: run.runId,
     startedAt: String(run.startedAt),
     roundIndex: String(run.roundIndex),
-    team: run.team,
+    team: run.team ?? '',
     seed: String(run.seed),
   });
   await redis.expire(K.activeRun(userId), RUN_TTL_SECONDS);
@@ -205,10 +214,9 @@ export function scoreRun(tally: RunTally): ScoredRun {
     tally.goldenClocks * SCORE.goldenClock +
     tally.enemyKills * SCORE.enemyKill;
 
-  const lost = tally.hazardHits * SCORE.hazardPenalty + tally.falls * SCORE.fallPenalty;
-
-  // Collected seconds cannot go below zero, then the per-run ceiling applies.
-  const awarded = Math.min(Math.max(0, gained - lost), RUN_CAPS.contribution);
+  // Hazards and falls are still reported — they are useful to look at — but
+  // they cost the player time, not seconds. See the note beside `SCORE`.
+  const awarded = Math.min(gained, RUN_CAPS.contribution);
   const stolen = Math.min(tally.enemyFragments * SCORE.enemyFragment, RUN_CAPS.stolen);
 
   return { awarded, stolen };
@@ -216,7 +224,15 @@ export function scoreRun(tally: RunTally): ScoredRun {
 
 export type RunRejection =
   | { ok: true }
-  | { ok: false; code: 'run_expired' | 'round_changed'; message: string };
+  | { ok: false; code: 'run_expired' | 'round_changed'; message: string }
+  /**
+   * Too early. Kept separate from the rejections above because it is the only
+   * timing failure that is *recoverable*: a late run really is gone, but an
+   * early one is almost always clock skew or a retry racing the clock, and the
+   * right answer is "not yet" rather than "your run is void". The caller must
+   * leave the active run in place when it sees this.
+   */
+  | { ok: false; code: 'too_early'; message: string; retryInMs: number };
 
 /** Checks a run's timing against the server clock alone. */
 export function validateTiming(run: ActiveRun, nowMs: number, roundIndex: number): RunRejection {
@@ -225,8 +241,9 @@ export function validateTiming(run: ActiveRun, nowMs: number, roundIndex: number
   if (elapsed < RUN_MS - RUN_GRACE_EARLY_MS) {
     return {
       ok: false,
-      code: 'run_expired',
-      message: 'That run was submitted before it could have finished.',
+      code: 'too_early',
+      message: 'That run has not finished yet.',
+      retryInMs: RUN_MS - elapsed,
     };
   }
 

@@ -18,7 +18,8 @@ import type { RunFinishResponse, RunTally } from '@/shared/api';
 export class ResultsScene extends Phaser.Scene {
   private runId!: string;
   private tally!: RunTally;
-  private team!: Team;
+  /** Null until the player picks a side — see `askForTeam`. */
+  private team!: Team | null;
 
   private bg!: Phaser.GameObjects.Graphics;
   private bar!: Phaser.GameObjects.Graphics;
@@ -34,22 +35,36 @@ export class ResultsScene extends Phaser.Scene {
   private boardBtn!: Button;
   private menuBtn!: Button;
   private shareBtn!: Button;
+  /** Shown only on a first run, in place of the buttons above. */
+  private redBtn!: Button;
+  private blueBtn!: Button;
+  private choosing = false;
 
   private result: RunFinishResponse | null = null;
   private submitting = false;
   private failed = false;
+  /**
+   * True when the server refused the run for a reason that will never change.
+   *
+   * This has to be its own flag rather than being inferred from `result`, which
+   * is only ever set on success: testing `!result` treats every failure as
+   * permanent, and the retry path below then becomes unreachable.
+   */
+  private permanent = false;
 
   constructor() {
     super('cs-results');
   }
 
-  init(data: { runId: string; tally: RunTally; team: Team }): void {
+  init(data: { runId: string; tally: RunTally; team: Team | null }): void {
     this.runId = data.runId;
     this.tally = data.tally;
     this.team = data.team;
     this.result = null;
     this.submitting = false;
     this.failed = false;
+    this.permanent = false;
+    this.choosing = data.team === null;
   }
 
   create(): void {
@@ -82,6 +97,16 @@ export class ResultsScene extends Phaser.Scene {
       void this.share(),
     );
 
+    this.redBtn = new Button(this, 0, 0, 'RED TEAM', { width: 240, filled: true, color: C.red }, () =>
+      this.chooseTeam('red'),
+    );
+    this.blueBtn = new Button(this, 0, 0, 'BLUE TEAM', { width: 240, filled: true, color: C.blue }, () =>
+      this.chooseTeam('blue'),
+    );
+    // Whichever set of buttons this screen is not using has to start hidden,
+    // or both stacks paint on top of each other for the first frame.
+    this.showChoice(this.choosing);
+
     this.renderLocal();
     this.relayout();
     this.scale.on(Phaser.Scale.Events.RESIZE, this.relayout, this);
@@ -90,7 +115,58 @@ export class ResultsScene extends Phaser.Scene {
     });
 
     this.cameras.main.fadeIn(220, 7, 11, 22);
+
+    // A first run has no side yet, so nothing is banked until the player says
+    // where it goes. Everyone else banks immediately.
+    if (this.choosing) this.askForTeam();
+    else void this.submit();
+  }
+
+  /* ---------------------------------------------------------------------- */
+  /* Choosing a side                                                         */
+  /* ---------------------------------------------------------------------- */
+
+  /**
+   * The first-run moment: the player has something in their hands before they
+   * are asked to commit to anything.
+   */
+  private askForTeam(): void {
+    const earned = this.localEarned();
+    this.heading.setText(earned > 0 ? 'WHO GETS THESE SECONDS?' : 'CHOOSE A SIDE');
+    this.statusText
+      .setText('your seconds go into that team’s shared clock')
+      .setColor(hex(C.dim));
+    this.showChoice(true);
+  }
+
+  private showChoice(on: boolean): void {
+    this.redBtn.setVisible(on);
+    this.blueBtn.setVisible(on);
+    for (const b of [this.againBtn, this.boardBtn, this.menuBtn, this.shareBtn]) {
+      b.setVisible(!on);
+    }
+  }
+
+  private chooseTeam(team: Team): void {
+    if (!this.choosing) return;
+    this.choosing = false;
+    this.team = team;
+    store.setTeam(team);
+    this.showChoice(false);
+    this.heading.setText('RUN COMPLETE');
+    this.renderLocal();
+    this.relayout();
     void this.submit();
+  }
+
+  /** What the local tally is worth, before the server has its say. */
+  private localEarned(): number {
+    const t = this.tally;
+    return (
+      t.fragments * SCORE.fragment +
+      t.goldenClocks * SCORE.goldenClock +
+      t.enemyFragments * SCORE.enemyFragment
+    );
   }
 
   /* ---------------------------------------------------------------------- */
@@ -105,7 +181,13 @@ export class ResultsScene extends Phaser.Scene {
     this.againBtn.setEnabled(false);
 
     try {
-      const res = await withRetry(() => api.finishRun(this.runId, this.tally));
+      // Four attempts rather than three: the backoff then spans ~2.8s, which
+      // comfortably covers the 1.2s early-grace window if this run reached the
+      // server a moment before its clock said it was done.
+      const res = await withRetry(
+        () => api.finishRun(this.runId, this.tally, this.team ?? undefined),
+        4,
+      );
       this.result = res;
       store.applyCommunity(res.community, res.activity);
       store.contribution = res.you.contribution;
@@ -126,17 +208,20 @@ export class ResultsScene extends Phaser.Scene {
       this.againBtn.setEnabled(true);
 
       const e = err instanceof NetError ? err : null;
-      // A run the server refused is gone; retrying it will never work, so the
-      // button becomes "play again" rather than a pointless retry.
-      const permanent =
+      // A run the server refused outright is gone; retrying it will never work,
+      // so the button becomes "back to menu" rather than a pointless retry.
+      // Anything else — a dropped connection, a timeout — is worth another go,
+      // and losing thirty seconds of play to one bad packet is the worst thing
+      // this game could do.
+      this.permanent =
         e !== null &&
         (e.code === 'run_duplicate' || e.code === 'run_expired' || e.code === 'round_changed');
 
       this.statusText
         .setText(e?.message ?? 'Could not reach the server.')
-        .setColor(hex(permanent ? C.gold : C.danger));
+        .setColor(hex(this.permanent ? C.gold : C.danger));
 
-      this.shareBtn.setCaption(permanent ? 'BACK TO MENU' : 'RETRY BANKING');
+      this.shareBtn.setCaption(this.permanent ? 'BACK TO MENU' : 'RETRY BANKING');
       void store.refreshQuietly();
       return;
     }
@@ -161,8 +246,10 @@ export class ResultsScene extends Phaser.Scene {
   }
 
   private async playAgain(): Promise<void> {
-    if (this.failed && !this.result) {
-      // Nothing was banked; go back rather than pretending it counted.
+    if (this.permanent) {
+      // Nothing was banked and nothing can be; go back rather than pretending
+      // it counted. A recoverable failure keeps the run, so it falls through
+      // and the player can still start a fresh one.
       fadeTo(this, () => this.scene.start('cs-menu'));
       return;
     }
@@ -181,7 +268,10 @@ export class ResultsScene extends Phaser.Scene {
 
   /** Puts a ready-made comment on the clipboard. */
   private async share(): Promise<void> {
-    if (this.failed && !this.result) {
+    // Order matters: only a *permanent* refusal sends the player away. A
+    // recoverable failure has to fall through to the retry, which is the whole
+    // point of the button saying "RETRY BANKING".
+    if (this.permanent) {
       fadeTo(this, () => this.scene.start('cs-menu'));
       return;
     }
@@ -191,12 +281,11 @@ export class ResultsScene extends Phaser.Scene {
     }
 
     const r = this.result;
-    if (!r) return;
+    if (!r || !this.team) return;
     const c = r.community;
     const line = [
-      `I banked ${r.awarded}s for ${teamName(this.team)} Team in Clockshot`,
-      r.stolen > 0 ? ` and stole ${r.stolen}s from the other side` : '',
-      `. Red ${c.banks.red}s vs Blue ${c.banks.blue}s — come take a run.`,
+      `I banked ${r.awarded + r.stolen}s for ${teamName(this.team)} Team in Clockshot. `,
+      `Red ${c.banks.red}s vs Blue ${c.banks.blue}s — come take a run.`,
     ].join('');
 
     try {
@@ -215,42 +304,41 @@ export class ResultsScene extends Phaser.Scene {
   /* Render                                                                  */
   /* ---------------------------------------------------------------------- */
 
-  /** What we can show before the server answers, from the local tally. */
+  /**
+   * What we can show before the server answers, from the local tally.
+   *
+   * Three rows, not ten. The old breakdown listed every counter the game keeps
+   * — including two kinds of penalty — and a beginner read it as a report card.
+   * These are the only lines that describe something the player chose to do.
+   */
   private renderLocal(): void {
     const t = this.tally;
-    const gained =
-      t.fragments * SCORE.fragment +
-      t.largeFragments * SCORE.largeFragment +
-      t.goldenClocks * SCORE.goldenClock +
-      t.enemyKills * SCORE.enemyKill;
-    const lost = t.hazardHits * SCORE.hazardPenalty + t.falls * SCORE.fallPenalty;
+    const rows: string[] = [`clocks         ${t.fragments}`];
+    if (t.goldenClocks > 0) rows.push(`golden clocks  ${t.goldenClocks}`);
+    if (t.enemyFragments > 0) rows.push(`stolen clocks  ${t.enemyFragments}`);
+    this.breakdown.setText(rows.join('\n'));
 
-    this.breakdown.setText(
-      [
-        `fragments      ${t.fragments}`,
-        `large clocks   ${t.largeFragments}`,
-        `golden clocks  ${t.goldenClocks}`,
-        `enemies down   ${t.enemyKills}`,
-        `stolen clocks  ${t.enemyFragments}`,
-        `hazards hit    ${t.hazardHits}`,
-        `falls          ${t.falls}`,
-        `                    `,
-        `collected      +${gained}s`,
-        `penalties      -${lost}s`,
-      ].join('\n'),
-    );
-    this.scoreText.setText(`+${Math.max(0, gained - lost)}s`).setColor(hex(teamColor(this.team)));
+    this.scoreText
+      .setText(`+${this.localEarned()}s`)
+      .setColor(hex(this.team ? teamColor(this.team) : C.gold));
   }
 
   private renderResult(r: RunFinishResponse): void {
     const c = r.community;
 
-    this.scoreText.setText(`+${r.awarded}s`).setColor(hex(teamColor(this.team)));
-    this.heading.setText(r.awarded > 0 ? 'SECONDS BANKED' : 'RUN COMPLETE');
+    // One number. `awarded` and `stolen` land in different banks, but they do
+    // the same thing to the only question the player actually asked — did my
+    // run help my team — so the screen answers it once instead of three times.
+    const banked = r.awarded + r.stolen;
+    const side = this.team ? teamName(this.team) : 'YOUR';
 
-    const stolenLine = r.stolen > 0 ? `  ·  stole ${r.stolen}s` : '';
+    this.scoreText
+      .setText(`+${banked}s`)
+      .setColor(hex(this.team ? teamColor(this.team) : C.gold));
+    this.heading.setText(banked > 0 ? 'SECONDS BANKED' : 'RUN COMPLETE');
+
     this.communityText.setText(
-      `${teamName(this.team)} TEAM  +${r.awarded}s${stolenLine}\nRED ${c.banks.red}s   ·   BLUE ${c.banks.blue}s`,
+      `banked for ${side} TEAM\nRED ${c.banks.red}s   ·   BLUE ${c.banks.blue}s`,
     );
     this.communityText.setAlign('center').setLineSpacing(5);
 
@@ -311,7 +399,14 @@ export class ResultsScene extends Phaser.Scene {
       .setOrigin(0, 0)
       .setFontSize(Math.round(11 * L.ui));
 
-    const breakdownBottom = columnTop + this.breakdown.height;
+    // The rule above applies to the breakdown too, not just the feed. It used
+    // to be placed unconditionally, and a ten-row column ran a good 60px under
+    // the buttons on a short screen.
+    this.breakdown.setVisible(columnTop + this.breakdown.height <= buttonsTop);
+
+    const breakdownBottom = this.breakdown.visible
+      ? columnTop + this.breakdown.height
+      : columnTop;
     const feedTop = breakdownBottom + 14 * L.ui;
     const feedRoom = buttonsTop - feedTop;
 
@@ -330,7 +425,16 @@ export class ResultsScene extends Phaser.Scene {
     by -= bh + gap;
     this.againBtn.setPosition(L.cx, by).setSize(bw, bh);
 
-    this.statusText.setPosition(L.cx, by - bh / 2 - 16 * L.ui).setFontSize(Math.round(11 * L.ui));
+    // The two side buttons share the bottom of the stack when they are up, so
+    // the choice sits exactly where the thumb already is.
+    const cbh = 58 * L.ui;
+    let cy = L.y + L.ih - cbh / 2 - 4 * L.ui;
+    this.blueBtn.setPosition(L.cx, cy).setSize(bw, cbh).setFontSize(18 * L.ui);
+    cy -= cbh + 12 * L.ui;
+    this.redBtn.setPosition(L.cx, cy).setSize(bw, cbh).setFontSize(18 * L.ui);
+
+    const statusY = this.choosing ? cy - cbh / 2 - 16 * L.ui : by - bh / 2 - 16 * L.ui;
+    this.statusText.setPosition(L.cx, statusY).setFontSize(Math.round(11 * L.ui));
 
     this.drawBar();
   }

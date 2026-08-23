@@ -108,11 +108,10 @@ export class MenuScene extends Phaser.Scene {
   private async onPlay(): Promise<void> {
     if (this.starting) return;
 
-    if (!store.team) {
-      fadeTo(this, () => this.scene.start('cs-team'));
-      return;
-    }
-
+    // No detour to the team screen. A player with no side still starts a run
+    // straight away and chooses who gets the seconds when they bank them —
+    // asking for a commitment before showing the game was the single biggest
+    // thing standing between a new player and their first thirty seconds.
     this.starting = true;
     this.playBtn.setCaption('STARTING…').setEnabled(false);
 
@@ -124,6 +123,8 @@ export class MenuScene extends Phaser.Scene {
       this.playBtn.setCaption('PLAY').setEnabled(true);
 
       if (err instanceof NetError && err.code === 'no_team') {
+        // Only an older server can still say this; the team screen is now a
+        // deliberate visit rather than a gate.
         fadeTo(this, () => this.scene.start('cs-team'));
         return;
       }
@@ -174,8 +175,8 @@ export class MenuScene extends Phaser.Scene {
         .setColor(hex(teamColor(store.team)));
       this.playBtn.setCaption('PLAY').setEnabled(!this.starting);
     } else {
-      this.youLabel.setText(`u/${store.username} · no team yet`).setColor(hex(C.dim));
-      this.playBtn.setCaption('PICK A TEAM').setEnabled(true);
+      this.youLabel.setText(`u/${store.username} · pick a side after your first run`).setColor(hex(C.dim));
+      this.playBtn.setCaption('PLAY').setEnabled(!this.starting);
     }
 
     // The feed is what turns a menu into a place where other people have been.

@@ -43,18 +43,16 @@ export const GRAPPLE = {
   maxSpeed: 1350,
 } as const;
 
+/**
+ * Enemies.
+ *
+ * They patrol and they hurt; they are not shot at. Removing the weapon took a
+ * whole second verb out of a thirty-second game — a fire button, a bullet pool,
+ * an auto-aim cone and a scoring row — and left the grapple as the one thing
+ * worth learning.
+ */
 export const COMBAT = {
-  bulletSpeed: 900,
-  bulletLifeMs: 900,
-  fireCooldownMs: 210,
-  /** How many bullets exist at once; the pool never grows past this. */
-  poolSize: 24,
-  bulletRadius: 6,
   enemyRadius: 20,
-  /** Aim assist: a shot within this angle of an enemy snaps onto it. */
-  autoAimRadians: 0.55,
-  autoAimRange: 620,
-  hitFlashMs: 120,
 } as const;
 
 export const PLAYER_SIZE = { w: 26, h: 38 } as const;

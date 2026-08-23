@@ -45,14 +45,13 @@ what the next person sees when they open the post.
 
 ## Controls
 
-**Mobile** — five large touch pads (all comfortably above the 44 px minimum):
+**Mobile** — four large touch pads (all comfortably above the 44 px minimum):
 
 | Pad | Action |
 |---|---|
 | `<` `>` | move left / right |
 | `JUMP` | jump (variable height — release early to hop) |
 | `GRAPPLE` | hold to hook the nearest anchor above you; release to launch |
-| `FIRE` | shoot toward the nearest enemy, or the way you are facing |
 
 **Desktop**
 
@@ -60,9 +59,11 @@ what the next person sees when they open the post.
 |---|---|
 | `A` / `D` or `←` / `→` | move |
 | `Space` / `W` / `↑` | jump |
-| `E` or right mouse | grapple |
-| `F` or left mouse | shoot |
+| `E` or either mouse button | grapple |
 | `Esc` or `P` | pause |
+
+There is no weapon. Enemies are obstacles to swing past, not targets — the
+grapple is the one verb worth learning, and it gets the screen to itself.
 
 The grapple auto-targets: the anchor it would take is always highlighted, so
 aiming is never a guess. The rope shortens while held, so a swing gains height
@@ -192,7 +193,7 @@ itself and drive it over real HTTP against an in-memory Redis.
 
 Manually verified in a real browser (Playwright driving Chrome, including
 multi-touch via CDP): boot, team selection, a complete 30-second run with
-grappling and shooting, run banking, results, and the community state updating
+grappling, run banking, results, and the community state updating
 as a result. Viewport matrix — 360×640, 390×844, 412×915, 820×1180 tablet,
 1280×800 desktop and 844×390 landscape — all boot with no page scrolling, no
 clipped controls, and no console errors.

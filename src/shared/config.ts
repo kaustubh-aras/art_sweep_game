@@ -31,9 +31,17 @@ export const SCORE = {
   /** Taken off the *other* team rather than added to yours. */
   enemyFragment: 2,
   enemyKill: 2,
-  hazardPenalty: 2,
-  fallPenalty: 3,
 } as const;
+
+/**
+ * There is deliberately no hazard or fall penalty.
+ *
+ * Getting hit already costs the scarcest thing in a thirty-second run — the
+ * clock — through knockback, invulnerability frames and a ruined line. Charging
+ * banked seconds on top of that is what let a beginner finish a whole run on
+ * zero, which is the worst thing this game could tell a new player. Whatever
+ * you collect, you keep.
+ */
 
 /**
  * Hard ceilings used to validate a submitted run. These are generous — they

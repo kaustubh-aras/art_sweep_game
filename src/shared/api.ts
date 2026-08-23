@@ -116,7 +116,8 @@ export interface RunStartResponse {
   startedAt: number;
   expiresAt: number;
   now: number;
-  team: Team;
+  /** Null when the player has not picked a side yet — they choose after. */
+  team: Team | null;
   roundIndex: number;
   /** Seed so the arena layout is identical if the player refreshes mid-run. */
   seed: number;
@@ -125,6 +126,14 @@ export interface RunStartResponse {
 export interface RunFinishRequest {
   runId: string;
   tally: RunTally;
+  /**
+   * The side these seconds go to, sent only when the run started without one.
+   *
+   * This is the play-first path: a new player runs, sees what they earned, and
+   * *then* decides who gets it — which turns the team choice from a toll gate
+   * into a reward. Ignored when the run already carries a team.
+   */
+  team?: Team;
 }
 
 export interface RunFinishResponse {
@@ -165,6 +174,8 @@ export interface ErrorResponse {
     | 'bad_request'
     | 'run_not_found'
     | 'run_expired'
+    /** The run window has not closed yet. Recoverable — ask again shortly. */
+    | 'too_early'
     | 'run_duplicate'
     | 'round_changed'
     | 'rate_limited'

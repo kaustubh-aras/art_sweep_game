@@ -16,9 +16,7 @@ export const TEX = {
   playerRed: 'cs-player-red',
   playerBlue: 'cs-player-blue',
   enemy: 'cs-enemy',
-  bullet: 'cs-bullet',
   fragment: 'cs-frag',
-  large: 'cs-large',
   golden: 'cs-golden',
   enemyFrag: 'cs-efrag',
   anchor: 'cs-anchor',
@@ -113,26 +111,9 @@ export function bakeTextures(scene: Phaser.Scene): void {
     }
   });
 
-  const br = COMBAT.bulletRadius;
-  bake(scene, TEX.bullet, br * 2 + 10, br * 2 + 10, (g) => {
-    const c = br + 5;
-    glow(g, c, c, br * 1.6, C.gold);
-    g.fillStyle(C.ink, 1);
-    g.fillCircle(c, c, br * 0.55);
-    g.fillStyle(C.gold, 0.95);
-    g.fillCircle(c, c, br * 0.32);
-  });
-
   bake(scene, TEX.fragment, 30, 30, (g) => {
     glow(g, 15, 15, 9, C.gold);
     clockFace(g, 15, 15, 7, C.gold, 0x3d2a00);
-  });
-
-  bake(scene, TEX.large, 42, 42, (g) => {
-    glow(g, 21, 21, 14, C.gold);
-    clockFace(g, 21, 21, 11, C.gold, 0x3d2a00);
-    g.lineStyle(2, C.ink, 0.55);
-    g.strokeCircle(21, 21, 15);
   });
 
   bake(scene, TEX.golden, 60, 60, (g) => {

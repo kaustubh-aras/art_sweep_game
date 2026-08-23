@@ -11,7 +11,6 @@ export interface Intent {
   jump: boolean;
   jumpHeld: boolean;
   grapple: boolean;
-  fire: boolean;
 }
 
 export const NO_INTENT: Intent = {
@@ -19,7 +18,6 @@ export const NO_INTENT: Intent = {
   jump: false,
   jumpHeld: false,
   grapple: false,
-  fire: false,
 };
 
 /**
@@ -47,6 +45,7 @@ export class Player {
   private grappleReadyAt = 0;
   private invulnerableUntil = 0;
   private wasGrappleHeld = false;
+  private wasJumpHeld = false;
 
   constructor(
     private readonly scene: Phaser.Scene,
@@ -253,8 +252,13 @@ export class Player {
       this.jumpBufferedUntil = 0;
       this.coyoteUntil = 0;
     }
-    // Variable height: letting go early cuts the rise short.
-    if (!intent.jumpHeld && this.body.velocity.y < 0 && !this.attached) {
+    // Variable height: the cut fires once, on the frame the button comes up.
+    // Running it every frame would compound — 0.45^5 is about 0.02 — and wipe
+    // out the upward momentum a grapple release has just earned, which is the
+    // one thing a swing exists to give you.
+    const releasedJump = this.wasJumpHeld && !intent.jumpHeld;
+    this.wasJumpHeld = intent.jumpHeld;
+    if (releasedJump && this.body.velocity.y < 0 && !this.attached) {
       this.body.velocity.y *= MOVE.cutMultiplier;
     }
 

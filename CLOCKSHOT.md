@@ -3,7 +3,12 @@
 > **What this document is.** A complete description of the game as it exists in
 > this repository today, followed by concrete, prioritised advice on improving
 > and scaling it. Written from a full source read, a module-reachability trace
-> from both entrypoints, a clean `npm run typecheck`, and a passing 93-test suite.
+> from both entrypoints, a clean `npm run typecheck`, and a passing test suite
+> (now 98 tests), then verified by playing the game locally.
+>
+> **A simplification pass has since been applied** — see
+> [§16 The simplification pass](#16--the-simplification-pass) for what changed
+> and why. Defects 1, 3, 8 and 9 below are **fixed**; the rest are open.
 >
 > Companion documents: [`README.md`](README.md) is the player/judge-facing pitch.
 > [`SWEEP_GDD.md`](SWEEP_GDD.md) describes a **different, abandoned game** — see
@@ -28,6 +33,7 @@
 13. [Feature roadmap](#13--feature-roadmap)
 14. [Appendix: file map](#14--appendix-file-map)
 15. [Appendix: running it locally](#15--appendix-running-it-locally)
+16. [The simplification pass](#16--the-simplification-pass)
 
 ---
 
@@ -39,13 +45,17 @@ that installs it gets its own persistent instance.
 
 **The loop.**
 
-1. A player opens the post and picks a side — **Red** or **Blue**.
+1. A player opens the post and presses **PLAY**. No sign-up, no side to pick.
 2. They take a **30-second run** through a single hand-authored arena, swinging
-   on a grapple, shooting patrolling enemies, and collecting clock fragments.
-3. Every second they collect is **banked into their team's shared clock** for
-   the whole subreddit.
+   on a grapple past patrolling enemies and collecting clock fragments.
+3. At the end they are asked **"who gets these seconds?"** — Red or Blue. Their
+   run is banked into that team's shared clock for the whole subreddit.
 4. Whichever team is ahead when the **10-minute community round** ends wins it —
    for everyone, whether or not they were online.
+
+The team choice comes *after* the first run on purpose: it turns a commitment
+demanded of a stranger into a reward handed to someone who has just earned
+something. From the second run onward the side is remembered.
 
 **Three clocks run at once**, and that layering *is* the theme interpretation:
 
@@ -66,15 +76,16 @@ server-side on every submit):
 | Action | Value | Effect |
 |---|---|---|
 | Clock fragment | +1 s | your bank |
-| Large fragment | +3 s | your bank |
 | Golden clock | +5 s | your bank |
-| Enemy destroyed | +2 s | your bank |
 | **Enemy fragment** | **−2 s** | **the other team's bank** |
-| Hazard hit | −2 s | your run total |
-| Fall | −3 s | your run total |
+| Hazard hit | — | knockback and lost time only |
+| Fall | — | respawn and lost time only |
 
-A run's own total is floored at zero and capped at 150 s; stolen seconds are
-capped at 60 s per run.
+**Whatever you collect, you keep.** Hazards and falls cost the run's scarcest
+resource — the clock — through knockback, i-frames and a ruined line; they do
+not take banked seconds away. Charging both is what let a beginner finish a
+whole run on zero, which is the worst thing a thirty-second game can say to
+someone on their first try. A run is capped at 150 s; stolen seconds at 60 s.
 
 ---
 
@@ -442,10 +453,14 @@ git rm -r src/game src/sweep src/audio public \
 
 ## 10 · Known defects
 
-Ordered by player impact. Items 1–3, 8 and 9 are verified by execution
-(8 and 9 were found by running the game locally — see §15).
+Ordered by player impact. Items 1–3, 8 and 9 were verified by execution (8 and 9
+were found by running the game locally — see §15).
 
-### 🔴 1. A failed bank can never be retried
+**Status:** 1, 3, 8 and 9 are fixed, with regression tests where the defect was
+testable. **2, 4, 5, 6 and 7 remain open.** Defect 2 (the `addToBank` race) is
+the most important of those.
+
+### ✅ 1. A failed bank can never be retried — **FIXED**
 
 **[`ResultsScene.ts`](src/scenes/clockshot/ResultsScene.ts)** — `submit` /
 `share` / `playAgain`
@@ -514,7 +529,7 @@ for (let attempt = 0; attempt < 4; attempt++) {
 
 Add a regression test that runs two `addToBank` calls through `Promise.all`.
 
-### 🔴 3. The jump-cut is applied every frame, not on release
+### ✅ 3. The jump-cut is applied every frame, not on release — **FIXED**
 
 **[`player.ts:270-272`](src/clockshot/player.ts#L270-L272)**
 
@@ -588,7 +603,7 @@ scene-level input. Track and remove the two specific handlers.
   committed placeholder is how secrets get committed later:
   `git rm --cached .env && echo '.env' >> .gitignore`.
 
-### 🔴 8. An *early* submit destroys the run
+### ✅ 8. An *early* submit destroys the run — **FIXED**
 
 **[`index.ts`](src/server/index.ts) — `handleRunFinish`**
 
@@ -634,7 +649,7 @@ if (!timing.ok) {
 }
 ```
 
-### 🟡 9. The results breakdown renders underneath the buttons
+### ✅ 9. The results breakdown renders underneath the buttons — **FIXED**
 
 **[`ResultsScene.ts`](src/scenes/clockshot/ResultsScene.ts) — `relayout()`**
 
@@ -995,3 +1010,70 @@ during this session.
 *Generated from a full source read of commit `1ed881a`, then verified by running
 the game locally. Defects 1–3, 8 and 9 in §10 were confirmed by execution; the
 rest by inspection.*
+
+---
+
+## 16 · The simplification pass
+
+### Why
+
+A driven playtest of the original build scored **+0s**: three fragments (+3s),
+three hazard hits and a fall (−9s), floored to zero — and the screen announced
+it in 40px type. Measuring the arena explained the rest: a new player walking
+right met their **first spike strip 140px from spawn — 0.44 seconds in** — and
+180px later a pit they could not cross without already knowing the grapple.
+
+The game asked a beginner to hold **19 concepts** for a 30-second experience.
+The idea was never the problem; the surface area was.
+
+### What changed
+
+| Change | Effect |
+|---|---|
+| **Play first, choose a side after** | Two screens and a blind commitment removed from the path to first play. The team question becomes *"who gets these seconds?"* — a reward, not a toll gate. |
+| **Hazards and falls cost time, not seconds** | The "+0s" failure state is gone. `SCORE.hazardPenalty` / `fallPenalty` deleted; `scoreRun` no longer subtracts. Whatever you collect, you keep. |
+| **Shooting removed** | No FIRE pad, bullet pool, auto-aim cone, or kill scoring. Enemies are obstacles to swing past. ~120 lines and a whole second verb gone. |
+| **Large fragments dropped** | Two reward tiers instead of three — a middle tier only ever read as "a slightly bigger clock". |
+| **One number, not three** | The HUD and the results headline show `awarded + stolen` as a single total. The split still exists on the wire and the server; nobody has to hold it in their head. |
+| **Results breakdown cut from 10 rows to ≤3** | Only lines describing something the player *chose* to do. This also fixed defect 9. |
+| **The arena opening reworked** | The spawn-island spike strip is gone and a five-clock trail runs along flat ground to the lip of the first pit, where the low anchor is already in grapple range. Run → score → *then* learn the rope. |
+
+**Concepts: 19 → 7.** Two teams · a 30-second run · swing · collect clocks ·
+gold ones are worth more · red ones hurt them · your seconds go to your team.
+
+### One deliberate deviation
+
+The plan called for three inputs (← → GRAPPLE). **Jump was kept**, so the pad
+count is four rather than three. Two reasons: nobody has to *learn* what a jump
+button does, so it costs a beginner nothing — and the remaining spike strips are
+32px tall and sit on flat ground, so removing jump would make them impassable on
+foot and turn several ordinary traversals into forced swings. Removing FIRE is
+what buys the simplification; removing JUMP mostly buys a broken arena. It is a
+ten-line change if you want it anyway.
+
+### What was deliberately *not* cut
+
+- **Stealing.** It is the only thing making this a war rather than two people
+  playing solitaire beside each other — and as a red pickup it needs no
+  explanation. The complexity was in the *reporting*, which is what got fixed.
+- **The grapple.** It is the identity. Cutting the weapon is what gives it the
+  screen to itself.
+- **The shared bank.** That is the idea worth keeping.
+
+### Verification
+
+`npm run typecheck` clean on both projects; **98/98 tests pass** (up from 93 —
+five new, covering the early-submit hold, the teamless-run path, the round lock
+against a forged team field, and the no-penalty scoring). The full new-player
+path was then driven in a real browser against the local server: menu → PLAY →
+30-second run (neutral cyan player, clean opening, grapple, collection) →
+*"WHO GETS THESE SECONDS?"* → RED → **banked**, `+4s`, feed line, rank #1, with
+no text running under a button.
+
+### Server compatibility
+
+`RunTally` keeps `largeFragments`, `enemyKills`, `hazardHits` and `falls` on the
+wire; the client simply reports zero for them, and `RUN_CAPS` still validates
+them. Nothing about the trust model moved: identity still comes from `context`,
+scoring is still recomputed server-side, and the round lock still wins over any
+`team` field a client sends.

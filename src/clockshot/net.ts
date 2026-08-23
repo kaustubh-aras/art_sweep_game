@@ -29,7 +29,14 @@ export class NetError extends Error {
 
   /** True when trying the exact same call again is reasonable. */
   get retryable(): boolean {
-    return this.code === 'offline' || this.code === 'timeout' || this.code === 'server_error';
+    return (
+      this.code === 'offline' ||
+      this.code === 'timeout' ||
+      this.code === 'server_error' ||
+      // The server kept the run and told us to come back — the one rejection
+      // that is a "not yet" rather than a "no".
+      this.code === 'too_early'
+    );
   }
 }
 
@@ -87,8 +94,9 @@ export const api = {
 
   startRun: (): Promise<RunStartResponse> => call<RunStartResponse>('/api/run/start', 'POST'),
 
-  finishRun: (runId: string, tally: RunTally): Promise<RunFinishResponse> =>
-    call<RunFinishResponse>('/api/run/finish', 'POST', { runId, tally }),
+  /** `team` is sent only for a run that began before the player had a side. */
+  finishRun: (runId: string, tally: RunTally, team?: Team): Promise<RunFinishResponse> =>
+    call<RunFinishResponse>('/api/run/finish', 'POST', { runId, tally, team }),
 
   leaderboard: (): Promise<LeaderboardResponse> =>
     call<LeaderboardResponse>('/api/leaderboard', 'GET'),

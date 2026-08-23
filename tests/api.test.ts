@@ -145,10 +145,83 @@ describe('team selection', () => {
     expect(res.body.message).toBeTruthy();
   });
 
-  it('requires a team before a run can start', async () => {
-    const res = await call<{ code: string }>('/api/run/start', { as: 'newbie', method: 'POST' });
+  it('lets a brand new player run before they have picked a side', async () => {
+    const res = await call<{ runId: string; team: string | null }>('/api/run/start', {
+      as: 'newbie',
+      method: 'POST',
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.runId).toBeTruthy();
+    expect(res.body.team).toBeNull();
+  });
+
+  it('banks a teamless run once the player says who it is for', async () => {
+    const start = await call<{ runId: string }>('/api/run/start', {
+      as: 'newbie',
+      method: 'POST',
+    });
+    const res = await call<{ awarded: number; you: { team: string } }>('/api/run/finish', {
+      as: 'newbie',
+      method: 'POST',
+      offset: RUN_MS,
+      body: { runId: start.body.runId, tally: { fragments: 6 }, team: 'blue' },
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.awarded).toBe(6);
+    expect(res.body.you.team).toBe('blue');
+
+    // The choice has to stick, or the next run asks all over again.
+    const state = await call<{ you: { team: string } }>('/api/state', { as: 'newbie' });
+    expect(state.body.you.team).toBe('blue');
+  });
+
+  it('refuses to bank a teamless run with no side attached', async () => {
+    const start = await call<{ runId: string }>('/api/run/start', {
+      as: 'newbie',
+      method: 'POST',
+    });
+    const res = await call<{ code: string }>('/api/run/finish', {
+      as: 'newbie',
+      method: 'POST',
+      offset: RUN_MS,
+      body: { runId: start.body.runId, tally: { fragments: 6 } },
+    });
     expect(res.status).toBe(400);
     expect(res.body.code).toBe('no_team');
+
+    // ...and the run must survive, so the player can pick and bank it.
+    const retry = await call<{ awarded: number }>('/api/run/finish', {
+      as: 'newbie',
+      method: 'POST',
+      offset: RUN_MS,
+      body: { runId: start.body.runId, tally: { fragments: 6 }, team: 'red' },
+    });
+    expect(retry.status).toBe(200);
+    expect(retry.body.awarded).toBe(6);
+  });
+
+  it('will not let a teamless run score for the side they did not commit to', async () => {
+    // alice is locked to red by the suite's setup and has already banked.
+    await call('/api/team', { as: 'alice', method: 'POST', body: { team: 'red' } });
+    const first = await call<{ runId: string }>('/api/run/start', { as: 'alice', method: 'POST' });
+    await call('/api/run/finish', {
+      as: 'alice',
+      method: 'POST',
+      offset: RUN_MS,
+      body: { runId: first.body.runId, tally: { fragments: 4 } },
+    });
+
+    const res = await call<{ you: { team: string } }>('/api/run/finish', {
+      as: 'alice',
+      method: 'POST',
+      offset: RUN_MS * 2 + 60_000,
+      body: { runId: 'nope', tally: { fragments: 4 }, team: 'blue' },
+    });
+    // The forged run id is rejected outright; the point is that a team field on
+    // the wire can never move someone off the side they are locked to.
+    expect(res.status).toBe(409);
+    const state = await call<{ you: { team: string } }>('/api/state', { as: 'alice' });
+    expect(state.body.you.team).toBe('red');
   });
 });
 
@@ -177,15 +250,17 @@ describe('a complete run', () => {
     expect(banks.red).toBe(STARTING_BANK + 2);
   });
 
-  it('applies hazard and fall penalties', async () => {
+  it('does not charge for hazards or falls', async () => {
     const res = await playRun('alice', { fragments: 10, hazardHits: 2, falls: 1 });
-    expect(res.body.awarded).toBe(10 - 2 * SCORE.hazardPenalty - SCORE.fallPenalty);
+    expect(res.body.awarded).toBe(10);
   });
 
-  it('never banks a negative amount', async () => {
+  it('always banks something for a player who collected something', async () => {
     const res = await playRun('alice', { fragments: 1, hazardHits: 10, falls: 5 });
-    expect(res.body.awarded).toBe(0);
-    expect((res.body.community as { banks: Record<string, number> }).banks.red).toBe(STARTING_BANK);
+    expect(res.body.awarded).toBe(1);
+    expect((res.body.community as { banks: Record<string, number> }).banks.red).toBe(
+      STARTING_BANK + 1,
+    );
   });
 
   it('caps an impossible claim instead of trusting it', async () => {
@@ -221,8 +296,31 @@ describe('run integrity', () => {
       offset: 2000,
       body: { runId: start.body.runId, tally: { fragments: 50 } },
     });
-    expect(res.status).toBe(409);
-    expect(res.body.code).toBe('run_expired');
+    expect(res.status).toBe(425);
+    expect(res.body.code).toBe('too_early');
+  });
+
+  it('keeps an early-submitted run alive so the honest submit still banks', async () => {
+    const start = await call<{ runId: string }>('/api/run/start', { as: 'alice', method: 'POST' });
+
+    // A moment of clock skew: the client asks before the window has closed.
+    await call('/api/run/finish', {
+      as: 'alice',
+      method: 'POST',
+      offset: 2000,
+      body: { runId: start.body.runId, tally: { fragments: 5 } },
+    });
+
+    // The run must still be there. Losing it here would turn a retry into a
+    // lost thirty seconds — the worst failure this game has.
+    const res = await call<{ awarded: number }>('/api/run/finish', {
+      as: 'alice',
+      method: 'POST',
+      offset: RUN_MS,
+      body: { runId: start.body.runId, tally: { fragments: 5 } },
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.awarded).toBe(5);
   });
 
   it('refuses a run that came back far too late', async () => {

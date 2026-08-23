@@ -168,7 +168,8 @@ async function handleState(res: ServerResponse): Promise<void> {
       contribution: Math.round(contribution),
       rank,
       activeRunId: active?.runId ?? null,
-      canPlay: team !== null && cooldownMs === 0,
+      // Not having a side no longer blocks a run — the choice comes after.
+      canPlay: cooldownMs === 0,
       cooldownMs,
     },
     activity,
@@ -226,8 +227,11 @@ async function handleRunStart(res: ServerResponse): Promise<void> {
   const player = currentPlayer();
   if (!player) return fail(res, 401, 'no_user', 'Log in to Reddit to play.');
 
+  // No team is not an error here. A first-time player is sent straight into a
+  // run and picks a side when they bank it — being asked to commit to a colour
+  // before seeing the game is the single biggest thing standing between a new
+  // player and their first thirty seconds.
   const team = await readTeam(player.userId);
-  if (!team) return fail(res, 400, 'no_team', 'Pick a team before you play.');
 
   const now = Date.now();
   const cooldown = await msUntilAllowed(player.userId, now);
@@ -237,7 +241,8 @@ async function handleRunStart(res: ServerResponse): Promise<void> {
 
   const roundIndex = roundIndexAt(now);
   const { run } = await startRun(player.userId, team, roundIndex, now);
-  await ensurePlayer(roundIndex, player.username, team);
+  // Only a player who has actually chosen a side belongs on the round board.
+  if (team) await ensurePlayer(roundIndex, player.username, team);
 
   send(res, 200, {
     status: 'ok',
@@ -271,10 +276,38 @@ async function handleRunFinish(req: IncomingMessage, res: ServerResponse): Promi
   const roundIndex = roundIndexAt(now);
   const timing = validateTiming(run, now, roundIndex);
   if (!timing.ok) {
-    // A run that cannot count still has to be cleared, or the player is stuck.
+    // An early submit is recoverable, so the run is deliberately left in place
+    // and nothing is spent — the client simply asks again once the clock has
+    // caught up. Clearing here would turn a moment of clock skew into a lost
+    // run, because the honest submit that follows would find nothing to bank.
+    if (timing.code === 'too_early') {
+      return fail(res, 425, 'too_early', timing.message);
+    }
+    // A late or out-of-round run genuinely cannot count, and it still has to be
+    // cleared or the player is stuck with a run they can never finish.
     await clearActiveRun(player.userId);
     await markFinished(player.userId, now);
     return fail(res, 409, timing.code, timing.message);
+  }
+
+  // Resolve which side these seconds belong to *before* the run is spent, so a
+  // submission that arrives without a choice can simply be sent back for one
+  // rather than burning the run.
+  let team = run.team;
+  if (!team) {
+    if (!isTeam(body.team)) {
+      return fail(res, 400, 'no_team', 'Pick a side to bank these seconds.');
+    }
+    // The round lock still wins: someone who already banked for a side this
+    // round cannot use a teamless run to score for the other one.
+    const existing = await readTeam(player.userId);
+    const contributed = existing ? await contributionOf(roundIndex, player.username) : 0;
+    if (existing && contributed > 0) {
+      team = existing;
+    } else {
+      team = body.team;
+      await writeTeam(player.userId, team);
+    }
   }
 
   // The atomic gate: only one request can ever claim this run id.
@@ -288,7 +321,6 @@ async function handleRunFinish(req: IncomingMessage, res: ServerResponse): Promi
 
   const { tally, adjusted } = sanitizeTally(body.tally);
   const { awarded, stolen } = scoreRun(tally);
-  const team = run.team;
   const foe = otherTeam(team);
 
   // Both bank writes are atomic increments, so simultaneous runs from other

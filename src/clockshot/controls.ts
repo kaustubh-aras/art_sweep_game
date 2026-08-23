@@ -8,7 +8,7 @@ import type { Intent } from './player';
  *
  * The touch buttons are hit-tested against every active pointer each frame
  * rather than wired to per-object input events. That is what makes "hold left,
- * hold grapple, tap fire" work at the same time — with object events, a second
+ * hold grapple, tap jump" work at the same time — with object events, a second
  * finger landing on a second button is easy to lose.
  */
 
@@ -42,12 +42,13 @@ export class Controls {
   private pads: Pad[] = [];
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
   private prevJump = false;
-  private prevFire = false;
-  private mouseFire = false;
   private mouseGrapple = false;
 
   /** Set when the player has touched the screen, so we can hide key hints. */
   usingTouch = false;
+
+  private onPointerDown: ((p: Phaser.Input.Pointer) => void) | null = null;
+  private onPointerUp: ((p: Phaser.Input.Pointer) => void) | null = null;
 
   constructor(
     private readonly scene: Phaser.Scene,
@@ -78,7 +79,6 @@ export class Controls {
       this.makePad('right', '>', R_MOVE, C.panelEdge),
       this.makePad('grapple', 'GRAPPLE', R_GRAPPLE, C.cyan),
       this.makePad('jump', 'JUMP', R_ACTION, C.good),
-      this.makePad('fire', 'FIRE', R_ACTION, C.gold),
     ];
   }
 
@@ -116,9 +116,10 @@ export class Controls {
     place('left', left + rm + 6 * ui, bottom - rm);
     place('right', left + rm * 3 + 16 * ui, bottom - rm);
 
+    // Grapple sits above jump under the right thumb. It is the verb the game
+    // is built on, so it gets the largest pad and the easiest reach.
     place('grapple', right - rg - 6 * ui, bottom - rg - 62 * ui);
-    place('fire', right - ra - 8 * ui, bottom - ra);
-    place('jump', right - ra * 3 - 18 * ui, bottom - ra);
+    place('jump', right - ra - 8 * ui, bottom - ra);
 
     this.draw();
   }
@@ -143,7 +144,7 @@ export class Controls {
       return;
     }
     this.keys = kb.addKeys(
-      'A,D,LEFT,RIGHT,SPACE,W,UP,E,F,ESC,P',
+      'A,D,LEFT,RIGHT,SPACE,W,UP,E,ESC,P',
     ) as Record<string, Phaser.Input.Keyboard.Key>;
 
     // Escape and P both pause; both are conventions people already have.
@@ -152,21 +153,23 @@ export class Controls {
   }
 
   private bindMouse(): void {
-    // Right mouse grapples, left mouse fires — but only from a real mouse, so
-    // a touch never double-counts as both a pad press and a click.
-    this.scene.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
+    // Either mouse button grapples — but only from a real mouse, so a touch
+    // never double-counts as both a pad press and a click. With shooting gone
+    // there is nothing else a click could mean, so both buttons do the useful
+    // thing rather than making the player find the right one.
+    this.onPointerDown = (p: Phaser.Input.Pointer): void => {
       if (p.wasTouch) {
         this.usingTouch = true;
         return;
       }
-      if (p.rightButtonDown()) this.mouseGrapple = true;
-      if (p.leftButtonDown()) this.mouseFire = true;
-    });
-    this.scene.input.on('pointerup', (p: Phaser.Input.Pointer) => {
+      this.mouseGrapple = true;
+    };
+    this.onPointerUp = (p: Phaser.Input.Pointer): void => {
       if (p.wasTouch) return;
-      if (!p.rightButtonDown()) this.mouseGrapple = false;
-      if (!p.leftButtonDown()) this.mouseFire = false;
-    });
+      this.mouseGrapple = false;
+    };
+    this.scene.input.on('pointerdown', this.onPointerDown);
+    this.scene.input.on('pointerup', this.onPointerUp);
   }
 
   /** Reads every pointer against every pad. Call once per frame. */
@@ -214,22 +217,12 @@ export class Controls {
 
     const jumpHeld =
       this.padDown('jump') || this.key('SPACE') || this.key('W') || this.key('UP');
-    const fireHeld = this.padDown('fire') || this.key('F') || this.mouseFire;
     const grapple = this.padDown('grapple') || this.key('E') || this.mouseGrapple;
 
     const jump = jumpHeld && !this.prevJump;
-    const fire = fireHeld && !this.prevFire;
     this.prevJump = jumpHeld;
-    this.prevFire = fireHeld;
 
-    return {
-      moveX,
-      jump,
-      jumpHeld,
-      // Holding fire keeps shooting; the weapon's own cooldown paces it.
-      fire: fire || fireHeld,
-      grapple,
-    };
+    return { moveX, jump, jumpHeld, grapple };
   }
 
   /**
@@ -259,7 +252,10 @@ export class Controls {
       kb.off('keydown-ESC', this.onPause);
       kb.off('keydown-P', this.onPause);
     }
-    this.scene.input.removeAllListeners();
+    // Only the two handlers this class installed. `removeAllListeners()` would
+    // also take out anything the scene bound for itself.
+    if (this.onPointerDown) this.scene.input.off('pointerdown', this.onPointerDown);
+    if (this.onPointerUp) this.scene.input.off('pointerup', this.onPointerUp);
     for (const p of this.pads) {
       p.gfx.destroy();
       p.text.destroy();
