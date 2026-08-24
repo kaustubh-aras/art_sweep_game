@@ -373,3 +373,11 @@
 .cs-dialog-actions .cs-btn {
   flex: 1;
 }
+
+/* Publishing is the loudest thing the editor does — it makes a post other
+   people will see — so it gets the accent nothing else in the bar uses. */
+.cs-tb-publish {
+  border-color: rgba(61, 240, 255, 0.55);
+  background: rgba(61, 240, 255, 0.12);
+  color: var(--cs-cyan);
+}

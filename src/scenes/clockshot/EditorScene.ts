@@ -30,6 +30,7 @@ import { canPersist, isSaved, loadDraft, saveDraft, saveLevel } from '@/clocksho
 import { practiceRun, type PracticeResult } from '@/clockshot/practice';
 import { drawPieceIcon } from '@/clockshot/buildArt';
 import { mountEditorChrome, type ChromeTool, type EditorChrome } from './editorChrome';
+import { api, NetError } from '@/clockshot/net';
 
 interface Rect {
   x: number;
@@ -105,6 +106,9 @@ export class EditorScene extends Phaser.Scene {
    * gone, and with it the re-sync on every relayout.
    */
   private chrome!: EditorChrome;
+
+  /** True while a publish is in flight, so POST cannot be pressed twice. */
+  private publishing = false;
 
   /* Gesture state. */
   private pointers = new Map<number, { x: number; y: number }>();
@@ -235,6 +239,7 @@ export class EditorScene extends Phaser.Scene {
       total: BUDGET_TOTAL,
       verified: this.level.verifiedMs !== null,
       onShelf: this.onShelf,
+      publishing: this.publishing,
     });
     this.drawCanvas();
   }
@@ -628,8 +633,50 @@ export class EditorScene extends Phaser.Scene {
         return this.onTest();
       case 'save':
         return this.onSave();
+      case 'publish':
+        return void this.onPublish();
       default:
         return;
+    }
+  }
+
+  /**
+   * Publishes the level as its own Reddit post.
+   *
+   * The level goes up as a claim, not as a fact — the server parses it from
+   * scratch, checks it against the same rules the palette enforced here, and
+   * refuses it if the author never cleared it. So the only thing this has to
+   * get right is telling the builder what happened.
+   */
+  private async onPublish(): Promise<void> {
+    if (this.publishing) return;
+
+    const problem = validate(this.level);
+    if (problem) {
+      this.toast(problem, 2400);
+      return;
+    }
+
+    this.publishing = true;
+    this.refresh();
+    saveDraft(this.level);
+
+    try {
+      const res = await api.publishLevel(this.level);
+      this.toast(
+        res.remaining > 0
+          ? `Posted. ${res.remaining} more level${res.remaining === 1 ? '' : 's'} today.`
+          : 'Posted. That is your last level today.',
+        3200,
+      );
+    } catch (err) {
+      this.toast(
+        err instanceof NetError ? err.message : 'Could not publish that level.',
+        3200,
+      );
+    } finally {
+      this.publishing = false;
+      this.refresh();
     }
   }
 

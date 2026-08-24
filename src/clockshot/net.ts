@@ -1,8 +1,11 @@
+import type { BuildLevel } from '@/shared/level';
 import type {
   ActivityResponse,
   ErrorResponse,
   LeaderboardResponse,
   RunFinishResponse,
+  LevelPostResponse,
+  PublishResponse,
   RunStartResponse,
   RunTally,
   StateResponse,
@@ -96,6 +99,18 @@ export const api = {
     call<LeaderboardResponse>('/api/leaderboard', 'GET'),
 
   activity: (): Promise<ActivityResponse> => call<ActivityResponse>('/api/activity', 'GET'),
+
+  /**
+   * What arena this post is.
+   *
+   * Asked by every post on boot. An ordinary Clockshot post answers with a null
+   * level and the daily arena is played; a level post answers with the arena it
+   * carries, and that gets played instead.
+   */
+  levelPost: (): Promise<LevelPostResponse> => call<LevelPostResponse>('/api/level', 'GET'),
+
+  publishLevel: (level: BuildLevel): Promise<PublishResponse> =>
+    call<PublishResponse>('/api/level/publish', 'POST', { level }),
 };
 
 /**

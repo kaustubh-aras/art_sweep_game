@@ -5,7 +5,10 @@ import { bakeTextures } from '@/clockshot/textures';
 import { loadArt } from '@/clockshot/art';
 import { store } from '@/clockshot/store';
 import { whenChosen } from '@/clockshot/choice';
+import type { LevelPostResponse } from '@/shared/api';
 import { api, NetError } from '@/clockshot/net';
+import { toArena } from '@/clockshot/build';
+import { setLevelPost } from '@/clockshot/levelPost';
 import { layoutOf, text } from '@/clockshot/ui';
 
 /**
@@ -22,6 +25,8 @@ export class BootScene extends Phaser.Scene {
   private tagline!: Phaser.GameObjects.Text;
   private t = 0;
   private done = false;
+  /** Set when this post carries a level of its own. */
+  private levelPost: LevelPostResponse | null = null;
 
   constructor() {
     super('cs-boot');
@@ -62,7 +67,16 @@ export class BootScene extends Phaser.Scene {
 
   private async load_(): Promise<void> {
     try {
-      await store.refresh();
+      // Both at once: a level post still needs the community state, and the
+      // level lookup is the same round trip either way.
+      const [, post] = await Promise.all([
+        store.refresh(),
+        api.levelPost().catch(() => null),
+      ]);
+      if (post?.level) {
+        this.levelPost = post;
+        setLevelPost(post);
+      }
     } catch {
       this.status.setText('could not reach the server');
       this.time.delayedCall(400, () => this.go('cs-error', { retryTo: 'cs-boot' }));
@@ -104,6 +118,15 @@ export class BootScene extends Phaser.Scene {
 
     try {
       const run = await api.startRun();
+      // A level post plays the arena it carries rather than the daily one. The
+      // run is still the server's — it is scored, just onto that level's own
+      // board — so only the geometry changes here.
+      const post = this.levelPost;
+      if (post?.level) {
+        const arena = toArena(post.level);
+        this.go('cs-play', { run, arena });
+        return;
+      }
       this.go('cs-play', { run });
     } catch (err) {
       const e = err instanceof NetError ? err : null;

@@ -29,12 +29,24 @@ import {
   validateTiming,
 } from './runs';
 import { START_TIME_MS, MAX_RUN_MS, arenaIndexAt, roundIndexAt } from '../shared/config';
+import { parseLevel } from '../shared/level';
+import {
+  clearCount,
+  levelBoard,
+  notePublish,
+  publishAllowance,
+  readLevel,
+  recordLevelScore,
+  saveLevel,
+} from './levels';
 import type {
   ActivityItem,
   ActivityResponse,
   ErrorResponse,
   LeaderboardResponse,
   RunFinishResponse,
+  LevelPostResponse,
+  PublishResponse,
   RunStartResponse,
   StateResponse,
 } from '../shared/api';
@@ -275,6 +287,41 @@ async function handleRunFinish(req: IncomingMessage, res: ServerResponse): Promi
 
   const { points, breakdown } = scoreRun(tally);
 
+  /**
+   * A run on a published level scores on THAT level's board and nowhere else.
+   *
+   * This is the whole reason the two boards are separate. If a custom level fed
+   * the daily leaderboard, the winning move would be to publish the easiest
+   * arena the editor allows and farm it — the community board would measure who
+   * built the shortest level rather than who is best at the game. Keeping them
+   * apart means a level post competes with itself, which is what a level is.
+   */
+  const levelPost = context.postId ? await readLevel(context.postId) : null;
+  if (levelPost && context.postId) {
+    const { best: levelBest, first } = await recordLevelScore(
+      context.postId,
+      player.username,
+      points,
+    );
+    const board = await levelBoard(context.postId, player.username);
+
+    return send(res, 200, {
+      status: 'ok',
+      points,
+      breakdown,
+      adjusted,
+      personalBest: points >= levelBest,
+      tookLead: board[0]?.username === player.username && points > 0,
+      board: await boardState(roundIndex),
+      you: {
+        best: levelBest,
+        rank: board.findIndex((r) => r.isYou) + 1 || null,
+        runs: await runsOf(roundIndex, player.username),
+      },
+      activity: first && points > 0 ? [] : [],
+    } satisfies RunFinishResponse);
+  }
+
   const runs = await bumpRuns(roundIndex, player.username);
   const { best, personalBest } = await recordScore(roundIndex, player.username, points);
 
@@ -344,6 +391,121 @@ async function handleActivity(res: ServerResponse): Promise<void> {
 /* Post creation                                                              */
 /* -------------------------------------------------------------------------- */
 
+/* -------------------------------------------------------------------------- */
+/* Published levels                                                           */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * What arena this post is.
+ *
+ * Every web view asks this on boot, including the ordinary daily post — which
+ * answers `level: null` and carries on as before. Making it one question with
+ * two answers, rather than two endpoints, means the client has a single place
+ * where it decides what it is about to play.
+ */
+async function handleLevelPost(res: ServerResponse): Promise<void> {
+  const postId = context.postId;
+  const you = currentPlayer()?.username ?? '';
+
+  const record = postId ? await readLevel(postId) : null;
+  if (!record || !postId) {
+    return send(res, 200, {
+      status: 'ok',
+      level: null,
+      author: null,
+      clears: 0,
+      board: [],
+      parMs: null,
+    } satisfies LevelPostResponse);
+  }
+
+  const [board, clears] = await Promise.all([
+    levelBoard(postId, you),
+    clearCount(postId),
+  ]);
+
+  return send(res, 200, {
+    status: 'ok',
+    level: record.level,
+    author: record.author,
+    clears,
+    board,
+    parMs: record.level.verifiedMs,
+  } satisfies LevelPostResponse);
+}
+
+/**
+ * Publishes a level as its own Reddit post.
+ *
+ * Three gates, in the order that costs least to fail:
+ *
+ *   1. The level parses and is legal, by the same rules the editor showed the
+ *      builder — `parseLevel` rebuilds it from scratch, so nothing that arrived
+ *      alongside the fields we asked for survives into storage.
+ *   2. The author has cleared it. An arena nobody has finished is not a level,
+ *      and the one person who should have to prove it is the one who built it.
+ *   3. They have publishes left today. This creates a Reddit post, so the
+ *      ceiling protects a subreddit before it protects a scoreboard.
+ *
+ * The post is created before the level is stored, because the post id is what
+ * the level is stored *against* — there is nowhere to put it until it exists.
+ */
+async function handlePublish(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const player = currentPlayer();
+  if (!player) {
+    return fail(res, 401, 'no_user', 'Log in to Reddit to publish a level.');
+  }
+  const { username } = player;
+
+  const body = (await readJson(req)) as { level?: unknown };
+  const parsed = parseLevel(body?.level);
+  if (!parsed.ok) {
+    return fail(res, 400, 'level_invalid', parsed.reason);
+  }
+  if (parsed.level.verifiedMs === null) {
+    return fail(
+      res,
+      400,
+      'level_unverified',
+      'Clear your own level in TEST before publishing it.',
+    );
+  }
+
+  const remaining = await publishAllowance(username);
+  if (remaining <= 0) {
+    return fail(
+      res,
+      429,
+      'publish_limit',
+      'You have published enough levels for today. Try again tomorrow.',
+    );
+  }
+
+  const post = await reddit.submitCustomPost({
+    subredditName: context.subredditName,
+    title: `${parsed.level.name} — a Clockshot level by u/${username}`,
+    textFallback: {
+      text: [
+        `**${parsed.level.name}** is a Clockshot level built by u/${username}.`,
+        '',
+        `They cleared it with **${(parsed.level.verifiedMs / 1000).toFixed(1)}s** left on the clock.`,
+        '',
+        'Open the post to swing it yourself.',
+      ].join('\n'),
+    },
+  });
+
+  await saveLevel(post.id, parsed.level, username);
+  await notePublish(username);
+
+  return send(res, 200, {
+    status: 'ok',
+    postId: post.id,
+    url: post.url,
+    remaining: remaining - 1,
+  } satisfies PublishResponse);
+}
+
 async function createGamePost(): Promise<UiResponse> {
   const post = await reddit.submitCustomPost({
     subredditName: context.subredditName,
@@ -376,6 +538,11 @@ const server = createServer(async (req, res) => {
         return await handleLeaderboard(res);
       case 'GET /api/activity':
         return await handleActivity(res);
+
+      case 'GET /api/level':
+        return await handleLevelPost(res);
+      case 'POST /api/level/publish':
+        return await handlePublish(req, res);
 
       case 'POST /internal/menu/create-post':
         return send(res, 200, await createGamePost());

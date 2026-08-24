@@ -40,6 +40,8 @@ export interface ChromeState {
   /** A level only becomes saveable once its author has actually cleared it. */
   verified: boolean;
   onShelf: boolean;
+  /** Set while a publish is in flight, so the button cannot be pressed twice. */
+  publishing?: boolean;
 }
 
 export interface ChromeTool {
@@ -104,7 +106,7 @@ export function mountEditorChrome(
   for (const a of ACTIONS) {
     ui.onClick(`[data-act="${a.id}"]`, () => handlers.onAction(a.id));
   }
-  for (const id of ['erase', 'mode', 'test', 'save']) {
+  for (const id of ['erase', 'mode', 'test', 'save', 'publish']) {
     ui.onClick(`[data-act="${id}"]`, () => handlers.onAction(id));
   }
 
@@ -170,6 +172,15 @@ export function mountEditorChrome(
       meter.style.width = `${frac * 100}%`;
       ui.find('.cs-meter').dataset.tone = tone;
       ui.text('.cs-meter-value', `${state.used}/${state.total}`);
+
+      // Publishing creates a Reddit post, so it is gated on the same proof as
+      // saving — an arena its own author has never finished is not a level.
+      const publish = ui.find<HTMLButtonElement>('[data-act="publish"]');
+      publish.disabled = !state.verified || state.publishing === true;
+      publish.textContent = state.publishing ? 'POSTING…' : 'POST';
+      publish.title = state.verified
+        ? 'Publish this level as a Reddit post anyone can play'
+        : 'Clear the level in TEST before publishing it';
 
       const save = ui.find<HTMLButtonElement>('[data-act="save"]');
       save.disabled = !state.verified;
@@ -259,6 +270,7 @@ function markup(): string {
         <div class="cs-tb-group cs-tb-verbs">
           <button type="button" class="cs-btn cs-tb-verb cs-tb-test" data-act="test">TEST</button>
           <button type="button" class="cs-btn cs-tb-verb cs-btn-primary" data-act="save">SAVE</button>
+          <button type="button" class="cs-btn cs-tb-verb cs-tb-publish" data-act="publish">POST</button>
         </div>
       </div>
 

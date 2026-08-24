@@ -1,3 +1,5 @@
+import type { BuildLevel } from './level';
+
 /**
  * The wire contract between the Clockshot client and its Devvit server.
  *
@@ -144,6 +146,41 @@ export interface LeaderboardResponse {
   roundIndex: number;
 }
 
+/* -------------------------------------------------------------------------- */
+/* Published levels                                                           */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * What a level post is, from the web view's point of view.
+ *
+ * Asked on boot by every post. An ordinary Clockshot post answers with
+ * `level: null` and the daily arena is played; a level post answers with the
+ * arena it carries, and that is what gets played instead.
+ */
+export interface LevelPostResponse {
+  status: 'ok';
+  level: BuildLevel | null;
+  author: string | null;
+  /** How many distinct players have cleared it. */
+  clears: number;
+  /** The level's own board, best first. */
+  board: LeaderRow[];
+  /** The clock the author cleared it with, as the bar to beat. */
+  parMs: number | null;
+}
+
+export interface PublishRequest {
+  level: BuildLevel;
+}
+
+export interface PublishResponse {
+  status: 'ok';
+  postId: string;
+  url: string;
+  /** How many more levels this account may publish today. */
+  remaining: number;
+}
+
 export interface ActivityResponse {
   status: 'ok';
   activity: ActivityItem[];
@@ -162,6 +199,12 @@ export interface ErrorResponse {
     | 'run_duplicate'
     | 'round_changed'
     | 'rate_limited'
+    /** The level is not legal — the message says which rule it broke. */
+    | 'level_invalid'
+    /** The author has not cleared their own level yet. */
+    | 'level_unverified'
+    /** No more publishes left today. */
+    | 'publish_limit'
     | 'server_error';
   message: string;
 }

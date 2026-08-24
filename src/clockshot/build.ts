@@ -16,64 +16,49 @@
 
 import type { Anchor, Arena, Patrol, Rect } from './arena';
 import { C } from './theme';
+import {
+  BUDGET_TOTAL,
+  CELL,
+  COLS,
+  PIECE_RULES,
+  ROWS,
+  WORLD,
+  budgetOf,
+  countKind,
+  inBounds,
+  levelProblem,
+  type BuildLevel,
+  type BuildPiece,
+  type Cell,
+  type PieceKind,
+} from '@/shared/level';
 
-/** World units to a grid cell. Sized so one cell is a comfortable landing. */
-export const CELL = 60;
-export const COLS = 30;
-export const ROWS = 25;
+// Re-exported so the editor and the scenes keep importing the level model from
+// one place. The rules live in `shared` because the server enforces them too.
+export {
+  BUDGET_TOTAL,
+  CELL,
+  COLS,
+  ROWS,
+  WORLD,
+  budgetOf,
+  countKind,
+  inBounds,
+  levelProblem,
+  type BuildLevel,
+  type BuildPiece,
+  type Cell,
+  type PieceKind,
+};
 
-export const WORLD = { width: COLS * CELL, height: ROWS * CELL } as const;
 
-/**
- * What a level may cost, in total.
- *
- * A budget rather than a piece limit: it is what stops a builder paving the
- * whole grid, and it makes an anchor or a golden clock a decision instead of a
- * free sprinkle. The number is deliberately generous — the shipped arenas would
- * each land somewhere around a hundred.
- */
-export const BUDGET_TOTAL = 160;
 
-export type PieceKind =
-  | 'block'
-  | 'anchor'
-  | 'spike'
-  | 'clock'
-  | 'golden'
-  | 'checkpoint'
-  | 'enemy';
 
 /** The two singletons. They are placed, never counted, and never deleted. */
 export type Tool = PieceKind | 'spawn' | 'goal';
 
-export interface Cell {
-  x: number;
-  y: number;
-}
 
-export interface BuildPiece extends Cell {
-  kind: PieceKind;
-}
 
-/** One player-made level. This is exactly what is written to storage. */
-export interface BuildLevel {
-  /** Bumped whenever the shape below changes, so old saves can be dropped. */
-  v: 1;
-  id: string;
-  name: string;
-  spawn: Cell;
-  goal: Cell;
-  pieces: BuildPiece[];
-  updatedAt: number;
-  /**
-   * The clock left over on the builder's own clearing run, or null.
-   *
-   * A level cannot be saved to the library until its author has actually
-   * finished it, and any edit sets this back to null. It is the one rule that
-   * keeps the library free of levels whose goal cannot be reached.
-   */
-  verifiedMs: number | null;
-}
 
 export interface PieceMeta {
   label: string;
@@ -85,15 +70,29 @@ export interface PieceMeta {
   color: number;
 }
 
-export const PIECES: Record<PieceKind, PieceMeta> = {
-  block: { label: 'BLOCK', hint: 'solid', cost: 1, cap: null, color: C.platformTop },
-  anchor: { label: 'ANCHOR', hint: 'swing', cost: 3, cap: 26, color: C.cyan },
-  clock: { label: 'CLOCK', hint: '+2s', cost: 2, cap: 40, color: C.gold },
-  golden: { label: 'GOLDEN', hint: '+5s', cost: 8, cap: 1, color: C.gold },
-  checkpoint: { label: 'CHECK', hint: 'restart', cost: 5, cap: 4, color: C.goal },
-  spike: { label: 'SPIKE', hint: '-2s', cost: 1, cap: 40, color: C.danger },
-  enemy: { label: 'ENEMY', hint: '-2s', cost: 4, cap: 10, color: C.danger },
+/**
+ * What each piece looks like in the palette.
+ *
+ * Cost and cap are folded in from `PIECE_RULES` rather than written twice —
+ * they are rules the server enforces, and a palette that disagreed with the
+ * publish endpoint would let a builder spend a budget they do not have.
+ */
+const PIECE_ART: Record<PieceKind, { label: string; hint: string; color: number }> = {
+  block: { label: 'BLOCK', hint: 'solid', color: C.platformTop },
+  anchor: { label: 'ANCHOR', hint: 'swing', color: C.cyan },
+  clock: { label: 'CLOCK', hint: '+2s', color: C.gold },
+  golden: { label: 'GOLDEN', hint: '+5s', color: C.gold },
+  checkpoint: { label: 'CHECK', hint: 'restart', color: C.goal },
+  spike: { label: 'SPIKE', hint: '-2s', color: C.danger },
+  enemy: { label: 'ENEMY', hint: '-2s', color: C.danger },
 };
+
+export const PIECES: Record<PieceKind, PieceMeta> = Object.fromEntries(
+  Object.entries(PIECE_ART).map(([kind, art]) => [
+    kind,
+    { ...art, ...PIECE_RULES[kind as PieceKind] },
+  ]),
+) as Record<PieceKind, PieceMeta>;
 
 /** Palette order: build the ground first, then the route, then the danger. */
 export const PALETTE_ORDER: readonly PieceKind[] = [
@@ -110,28 +109,12 @@ export const PALETTE_ORDER: readonly PieceKind[] = [
 /* Reading a level                                                            */
 /* -------------------------------------------------------------------------- */
 
-export function inBounds(x: number, y: number): boolean {
-  return x >= 0 && y >= 0 && x < COLS && y < ROWS;
-}
-
 export function sameCell(a: Cell, b: Cell): boolean {
   return a.x === b.x && a.y === b.y;
 }
 
 export function pieceAt(level: BuildLevel, x: number, y: number): BuildPiece | undefined {
   return level.pieces.find((p) => p.x === x && p.y === y);
-}
-
-export function countKind(level: BuildLevel, kind: PieceKind): number {
-  let n = 0;
-  for (const p of level.pieces) if (p.kind === kind) n++;
-  return n;
-}
-
-export function budgetOf(level: BuildLevel): number {
-  let sum = 0;
-  for (const p of level.pieces) sum += PIECES[p.kind].cost;
-  return sum;
 }
 
 /** True when a cell already holds something — a piece, the spawn, or the goal. */
@@ -157,10 +140,9 @@ export function cloneLevel(level: BuildLevel): BuildLevel {
  */
 export function validate(level: BuildLevel): string | null {
   if (sameCell(level.spawn, level.goal)) return 'Spawn and goal are in the same place';
-  if (level.pieces.length === 0) return 'Nothing built yet';
-  if (countKind(level, 'block') === 0) return 'Place some ground to stand on';
-  if (budgetOf(level) > BUDGET_TOTAL) return 'Over budget';
-  return null;
+  // Everything else is the server's rule set, asked here so a builder is told
+  // the same sentence the publish endpoint would have told them.
+  return levelProblem(level);
 }
 
 /* -------------------------------------------------------------------------- */
