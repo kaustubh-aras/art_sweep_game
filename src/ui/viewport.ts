@@ -89,4 +89,16 @@ export function initViewport(game: Phaser.Game, parentId: string): void {
     if (!document.hidden) schedule();
   });
   window.addEventListener('pageshow', schedule);
+
+  // Entering or leaving full screen changes the viewport, and some browsers
+  // animate the transition — reporting the old size for a beat, exactly like an
+  // iOS rotation. Measure again over the next half second so the game is never
+  // laid out for the window it has just left.
+  const settle = (): void => {
+    schedule();
+    setTimeout(schedule, 120);
+    setTimeout(schedule, 420);
+  };
+  document.addEventListener('fullscreenchange', settle);
+  document.addEventListener('webkitfullscreenchange', settle);
 }
