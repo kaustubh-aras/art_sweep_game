@@ -41,14 +41,14 @@ export class PauseScene extends Phaser.Scene {
     this.warn = text(this, 0, 0, 'Your clock is paused.\nTake your time.', 12, C.dim);
     this.warn.setAlign('center').setLineSpacing(5);
 
-    this.resumeBtn = new Button(this, 0, 0, 'RESUME', { width: 240, filled: true, color: C.good }, () =>
+    this.resumeBtn = new Button(this, 0, 0, 'RESUME', { width: 240, variant: 'primary', color: C.good }, () =>
       this.resume_(),
     );
-    this.soundBtn = new Button(this, 0, 0, this.soundCaption(), { width: 240, color: C.panelEdge }, () => {
+    this.soundBtn = new Button(this, 0, 0, this.soundCaption(), { width: 240, variant: 'ghost' }, () => {
       sfx.toggleMute();
       this.soundBtn.setCaption(this.soundCaption());
     });
-    this.quitBtn = new Button(this, 0, 0, this.quitCaption, { width: 240, color: C.danger }, () => {
+    this.quitBtn = new Button(this, 0, 0, this.quitCaption, { width: 240, variant: 'danger' }, () => {
       // Abandoning simply stops playing; the run is never submitted, so it
       // expires on the server and costs the team nothing.
       this.scene.stop(this.from);

@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { C, FONT, hex } from '@/clockshot/theme';
+import { addBackdrop } from '@/clockshot/glass';
 import { api, NetError } from '@/clockshot/net';
 import { formatPoints } from '@/clockshot/store';
 import { Button, fadeTo, layoutOf, text } from '@/clockshot/ui';
@@ -28,6 +29,8 @@ export class LeaderboardScene extends Phaser.Scene {
 
   create(): void {
     this.cameras.main.setBackgroundColor(C.bg);
+    // Glass needs something behind it, or it is just a grey box.
+    addBackdrop(this);
     this.bg = this.add.graphics();
     this.bar = this.add.graphics();
     this.rowsGfx = this.add.graphics();
@@ -37,10 +40,10 @@ export class LeaderboardScene extends Phaser.Scene {
     this.topText = text(this, 0, 0, '', 13, C.dim);
     this.status = text(this, 0, 0, 'loading…', 12, C.faint);
 
-    this.refreshBtn = new Button(this, 0, 0, 'REFRESH', { width: 240, color: C.cyan }, () =>
+    this.refreshBtn = new Button(this, 0, 0, 'REFRESH', { width: 240, variant: 'secondary' }, () =>
       void this.fetchBoard(),
     );
-    this.backBtn = new Button(this, 0, 0, 'BACK', { width: 240, color: C.panelEdge }, () =>
+    this.backBtn = new Button(this, 0, 0, 'BACK', { width: 240, variant: 'ghost' }, () =>
       fadeTo(this, () => this.scene.start('cs-menu')),
     );
 

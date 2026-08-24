@@ -1,8 +1,9 @@
 import Phaser from 'phaser';
-import { C, FONT, hex } from '@/clockshot/theme';
+import { C, FONT, GLASS, R, S, T, hex } from '@/clockshot/theme';
+import { addBackdrop, drawGlass } from '@/clockshot/glass';
 import { sfx } from '@/clockshot/sfx';
 import { activityLine, formatClock, formatPoints, store } from '@/clockshot/store';
-import { Button, fadeTo, layoutOf, text } from '@/clockshot/ui';
+import { Button, TOUCH_MIN, fadeTo, layoutOf, text } from '@/clockshot/ui';
 import { api, NetError } from '@/clockshot/net';
 import { attachTapProxy, type TapProxy } from '@/clockshot/immersive';
 import { arenaAt } from '@/clockshot/arena';
@@ -69,6 +70,8 @@ export class MenuScene extends Phaser.Scene {
 
   create(): void {
     this.cameras.main.setBackgroundColor(C.bg);
+    // Glass needs something behind it, or it is just a grey box.
+    addBackdrop(this);
     this.bg = this.add.graphics();
 
     this.title = text(this, 0, 0, 'CLOCKSHOT', 34, C.gold);
@@ -91,18 +94,18 @@ export class MenuScene extends Phaser.Scene {
     this.feedLabel = text(this, 0, 0, '', 10.5, C.dim, 'left');
     this.feedLabel.setAlign('left').setLineSpacing(6);
 
-    this.playBtn = new Button(this, 0, 0, 'PLAY', { width: 240, filled: true, color: C.gold }, () =>
+    this.playBtn = new Button(this, 0, 0, 'PLAY', { width: 240, variant: 'primary' }, () =>
       this.onPlay(),
     );
     // Building needs no server and no login: it is the one thing here a player
     // can do while the board is between windows or their connection is out.
-    this.buildBtn = new Button(this, 0, 0, 'BUILD A LEVEL', { width: 240, color: C.good }, () =>
+    this.buildBtn = new Button(this, 0, 0, 'BUILD A LEVEL', { width: 240, variant: 'secondary', color: C.good }, () =>
       fadeTo(this, () => this.scene.start('cs-levels')),
     );
-    this.howBtn = new Button(this, 0, 0, 'HOW TO PLAY', { width: 240, color: C.cyan }, () =>
+    this.howBtn = new Button(this, 0, 0, 'HOW TO PLAY', { width: 240, variant: 'secondary' }, () =>
       fadeTo(this, () => this.scene.start('cs-howto')),
     );
-    this.boardBtn = new Button(this, 0, 0, 'LEADERBOARD', { width: 240, color: C.panelEdge }, () =>
+    this.boardBtn = new Button(this, 0, 0, 'LEADERBOARD', { width: 240, variant: 'ghost' }, () =>
       fadeTo(this, () => this.scene.start('cs-leaderboard')),
     );
     this.soundBtn = new Button(
@@ -110,7 +113,7 @@ export class MenuScene extends Phaser.Scene {
       0,
       0,
       this.soundCaption(),
-      { width: 240, color: C.panelEdge },
+      { width: 240, variant: 'ghost' },
       () => {
         sfx.toggleMute();
         this.soundBtn.setCaption(this.soundCaption());
@@ -243,49 +246,38 @@ export class MenuScene extends Phaser.Scene {
     const g = this.bg;
     g.clear();
 
-    // The board panel, which owns the top of the screen.
-    const panelH = 132 * L.ui;
-    g.fillStyle(C.panel, 0.92);
-    g.fillRoundedRect(L.x, L.y + 4 * L.ui, L.iw, panelH, 16 * L.ui);
-    g.lineStyle(1.5, C.panelEdge, 0.6);
-    g.strokeRoundedRect(L.x, L.y + 4 * L.ui, L.iw, panelH, 16 * L.ui);
+    // The board panel, which owns the top of the screen. Every offset below is
+    // a step on the 4-point scale rather than whatever happened to look right,
+    // so the panel, the title block and the feed all sit on the same rhythm.
+    const panelH = S.h3 * 2.75 * L.ui;
+    const panelTop = L.y + S.xs * L.ui;
+    drawGlass(g, L.x, panelTop, L.iw, panelH, R.lg * L.ui, L.ui, { fill: GLASS.fillDense });
 
-    this.topLabel.setPosition(L.cx, L.y + 36 * L.ui).setFontSize(Math.round(17 * L.ui));
-    this.arenaLabel.setPosition(L.cx, L.y + 66 * L.ui).setFontSize(Math.round(11.5 * L.ui));
-    this.windowLabel.setPosition(L.cx, L.y + 94 * L.ui).setFontSize(Math.round(12 * L.ui));
-    this.prevLabel.setPosition(L.cx, L.y + 118 * L.ui).setFontSize(Math.round(10.5 * L.ui));
+    this.topLabel.setPosition(L.cx, panelTop + S.h1 * L.ui).setFontSize(Math.round(T.heading * L.ui));
+    this.arenaLabel
+      .setPosition(L.cx, panelTop + (S.h1 + S.xxl + S.xs) * L.ui)
+      .setFontSize(Math.round(T.label * L.ui));
+    this.windowLabel
+      .setPosition(L.cx, panelTop + (S.h1 + S.h2 + S.lg) * L.ui)
+      .setFontSize(Math.round(T.body * L.ui));
+    this.prevLabel
+      .setPosition(L.cx, panelTop + (S.h1 + S.h3 + S.h1) * L.ui)
+      .setFontSize(Math.round(T.micro * L.ui));
 
-    const titleY = L.y + panelH + 52 * L.ui;
-    this.title.setPosition(L.cx, titleY).setFontSize(Math.round(34 * L.ui));
-    this.tagline.setPosition(L.cx, titleY + 28 * L.ui).setFontSize(Math.round(11.5 * L.ui));
-    this.youLabel.setPosition(L.cx, titleY + 50 * L.ui).setFontSize(Math.round(11.5 * L.ui));
+    const titleY = panelTop + panelH + S.h3 * L.ui;
+    this.title.setPosition(L.cx, titleY).setFontSize(Math.round(T.display * L.ui));
+    this.tagline.setPosition(L.cx, titleY + S.xxl * L.ui).setFontSize(Math.round(T.label * L.ui));
+    this.youLabel.setPosition(L.cx, titleY + S.h3 * L.ui).setFontSize(Math.round(T.body * L.ui));
 
-    // The feed fills the space between the title block and the buttons.
-    const feedTop = titleY + 76 * L.ui;
-    const feedBottom = L.y + L.ih - (52 * L.ui + 10 * L.ui) * 5 - 16 * L.ui;
-    const feedH = Math.max(0, feedBottom - feedTop);
-    const showFeed = feedH > 76 * L.ui;
+    /* --- buttons -------------------------------------------------------- */
 
-    this.feedHeading.setVisible(showFeed);
-    this.feedLabel.setVisible(showFeed);
-    if (showFeed) {
-      g.fillStyle(C.panel, 0.5);
-      g.fillRoundedRect(L.x, feedTop, L.iw, feedH, 14 * L.ui);
-      this.feedHeading
-        .setPosition(L.x + 16 * L.ui, feedTop + 16 * L.ui)
-        .setFontSize(Math.round(10.5 * L.ui));
-      this.feedLabel
-        .setPosition(L.x + 16 * L.ui, feedTop + 34 * L.ui)
-        .setOrigin(0, 0)
-        .setFontSize(Math.round(10 * L.ui))
-        .setWordWrapWidth(L.iw - 32 * L.ui);
-    }
-
-    // Buttons stack up from the bottom so the thumb reaches PLAY first.
-    const bw = Math.min(300 * L.ui, L.iw - 40 * L.ui);
-    const bh = 52 * L.ui;
-    const gap = 10 * L.ui;
-    let by = L.y + L.ih - bh / 2 - 6 * L.ui;
+    // Sized and stacked first, because the stack owns the bottom of the screen
+    // and everything above it lives in what is left over. Gaps are a full
+    // spacing step, which also keeps neighbouring targets the required 8 apart.
+    const bw = Math.min(S.h3 * 6.25 * L.ui, L.iw - S.h2 * L.ui);
+    const bh = TOUCH_MIN * L.ui;
+    const gap = S.sm * L.ui;
+    let by = L.y + L.ih - bh / 2 - S.sm * L.ui;
 
     this.soundBtn.setPosition(L.cx, by);
     by -= bh + gap;
@@ -297,8 +289,33 @@ export class MenuScene extends Phaser.Scene {
     by -= bh + gap;
     this.playBtn.setPosition(L.cx, by);
 
+    /* --- the feed fills whatever is left -------------------------------- */
+
+    const feedTop = titleY + S.h3 * 1.5 * L.ui;
+    const feedBottom = by - bh / 2 - S.lg * L.ui;
+    const feedH = Math.max(0, feedBottom - feedTop);
+    // Below this there is not enough room for a heading and a line of feed, and
+    // a cropped list is worse than no list.
+    const showFeed = feedH > S.h3 * 1.75 * L.ui;
+
+    this.feedHeading.setVisible(showFeed);
+    this.feedLabel.setVisible(showFeed);
+    if (showFeed) {
+      // Flush against the screen rather than raised: the feed is a recess in
+      // the layout, not another card floating over it.
+      drawGlass(g, L.x, feedTop, L.iw, feedH, R.md * L.ui, L.ui, { raised: false });
+      this.feedHeading
+        .setPosition(L.x + S.lg * L.ui, feedTop + S.lg * L.ui)
+        .setFontSize(Math.round(T.micro * L.ui));
+      this.feedLabel
+        .setPosition(L.x + S.lg * L.ui, feedTop + S.h1 * L.ui)
+        .setOrigin(0, 0)
+        .setFontSize(Math.round(T.micro * L.ui))
+        .setWordWrapWidth(L.iw - S.h1 * L.ui);
+    }
+
     for (const b of [this.playBtn, this.buildBtn, this.howBtn, this.boardBtn, this.soundBtn]) {
-      b.setSize(bw, bh).setFontSize(16 * L.ui);
+      b.setSize(bw, bh).setFontSize(T.subhead * L.ui);
     }
 
     // A proxy that did not follow the re-layout would take taps where the

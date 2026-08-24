@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { C, FONT } from '@/clockshot/theme';
+import { addBackdrop } from '@/clockshot/glass';
 import { store } from '@/clockshot/store';
 import { Button, layoutOf, text } from '@/clockshot/ui';
 
@@ -33,6 +34,8 @@ export class ErrorScene extends Phaser.Scene {
 
   create(): void {
     this.cameras.main.setBackgroundColor(C.bg);
+    // Glass needs something behind it, or it is just a grey box.
+    addBackdrop(this);
     this.bg = this.add.graphics();
     this.icon = this.add.graphics();
 
@@ -42,7 +45,7 @@ export class ErrorScene extends Phaser.Scene {
     this.body = text(this, 0, 0, `${this.message}\n\nYour banked seconds are safe on the server.`, 12.5, C.dim);
     this.body.setAlign('center').setLineSpacing(6);
 
-    this.retryBtn = new Button(this, 0, 0, 'TRY AGAIN', { width: 240, filled: true, color: C.cyan }, () =>
+    this.retryBtn = new Button(this, 0, 0, 'TRY AGAIN', { width: 240, variant: 'primary' }, () =>
       void this.retry(),
     );
 

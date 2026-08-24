@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { C, FONT } from '@/clockshot/theme';
+import { addBackdrop } from '@/clockshot/glass';
 import { SCORE, START_TIME_MS, TIME_GAIN, TIME_LOSS } from '@/shared/config';
 import { Button, fadeTo, layoutOf, text } from '@/clockshot/ui';
 import { TEX, bakeTextures } from '@/clockshot/textures';
@@ -36,6 +37,8 @@ export class HowToScene extends Phaser.Scene {
 
   create(): void {
     this.cameras.main.setBackgroundColor(C.bg);
+    // Glass needs something behind it, or it is just a grey box.
+    addBackdrop(this);
     bakeTextures(this);
 
     this.pages = [
@@ -91,10 +94,10 @@ export class HowToScene extends Phaser.Scene {
     this.bodyText.setAlign('center').setLineSpacing(7);
     this.dots = this.add.graphics();
 
-    this.nextBtn = new Button(this, 0, 0, 'NEXT', { width: 240, filled: true, color: C.cyan }, () =>
+    this.nextBtn = new Button(this, 0, 0, 'NEXT', { width: 240, variant: 'primary' }, () =>
       this.advance(),
     );
-    this.backBtn = new Button(this, 0, 0, 'SKIP', { width: 240, color: C.panelEdge }, () =>
+    this.backBtn = new Button(this, 0, 0, 'SKIP', { width: 240, variant: 'ghost' }, () =>
       fadeTo(this, () => this.scene.start('cs-menu')),
     );
 

@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { C, FONT } from '@/clockshot/theme';
+import { addBackdrop } from '@/clockshot/glass';
 import { bakeTextures } from '@/clockshot/textures';
 import { store } from '@/clockshot/store';
 import { whenChosen } from '@/clockshot/choice';
@@ -27,6 +28,8 @@ export class BootScene extends Phaser.Scene {
 
   create(): void {
     this.cameras.main.setBackgroundColor(C.bg);
+    // Glass needs something behind it, or it is just a grey box.
+    addBackdrop(this);
     bakeTextures(this);
 
     this.dial = this.add.graphics();

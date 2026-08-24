@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { C, FONT, hex } from '@/clockshot/theme';
+import { addBackdrop } from '@/clockshot/glass';
 import { sfx } from '@/clockshot/sfx';
 import { Button, fadeTo, fitText, layoutOf, text, type Layout } from '@/clockshot/ui';
 import { countKind, seedOf, starterLevel, toArena, validate, type BuildLevel } from '@/clockshot/build';
@@ -72,6 +73,8 @@ export class LevelsScene extends Phaser.Scene {
 
   create(): void {
     this.cameras.main.setBackgroundColor(C.bg);
+    // Glass needs something behind it, or it is just a grey box.
+    addBackdrop(this);
     this.levels = loadLibrary();
     this.selected = 0;
     this.scroll = 0;
@@ -91,17 +94,17 @@ export class LevelsScene extends Phaser.Scene {
     this.empty = text(this, 0, 0, '', 12, C.dim);
     this.empty.setAlign('center').setLineSpacing(6);
 
-    this.playBtn = new Button(this, 0, 0, 'PLAY', { width: 100, filled: true, color: C.cyan }, () =>
+    this.playBtn = new Button(this, 0, 0, 'PLAY', { width: 100, variant: 'primary' }, () =>
       this.onPlay(),
     );
-    this.editBtn = new Button(this, 0, 0, 'EDIT', { width: 100, color: C.gold }, () => this.onEdit());
-    this.deleteBtn = new Button(this, 0, 0, 'DELETE', { width: 100, color: C.danger }, () =>
+    this.editBtn = new Button(this, 0, 0, 'EDIT', { width: 100, variant: 'secondary', color: C.gold }, () => this.onEdit());
+    this.deleteBtn = new Button(this, 0, 0, 'DELETE', { width: 100, variant: 'danger' }, () =>
       this.onDelete(),
     );
-    this.newBtn = new Button(this, 0, 0, 'NEW LEVEL', { width: 240, color: C.good }, () =>
+    this.newBtn = new Button(this, 0, 0, 'NEW LEVEL', { width: 240, variant: 'secondary', color: C.good }, () =>
       this.onNew(),
     );
-    this.backBtn = new Button(this, 0, 0, 'BACK', { width: 240, color: C.panelEdge }, () =>
+    this.backBtn = new Button(this, 0, 0, 'BACK', { width: 240, variant: 'ghost' }, () =>
       fadeTo(this, () => this.scene.start('cs-menu')),
     );
 

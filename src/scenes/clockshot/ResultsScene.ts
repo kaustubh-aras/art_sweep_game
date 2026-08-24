@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
-import { C, FONT, hex } from '@/clockshot/theme';
+import { C, FONT, GLASS, R, S, T, hex } from '@/clockshot/theme';
+import { addBackdrop, drawGlass } from '@/clockshot/glass';
 import { sfx } from '@/clockshot/sfx';
 import { formatPoints, store } from '@/clockshot/store';
 import { api, NetError, withRetry } from '@/clockshot/net';
@@ -24,12 +25,48 @@ import { attachTapProxy, type TapProxy } from '@/clockshot/immersive';
  * would make checking the board feel like leaving.
  */
 
-/** The card's design height. Everything inside is measured against this. */
-const CARD_H = 432;
-const CARD_W = 330;
+/**
+ * The card, laid out as a stack of blocks separated by spacing tokens.
+ *
+ * The height is *derived* from that stack rather than picked and then filled,
+ * which is the whole difference between a layout with rhythm and one where
+ * everything ends up six pixels from everything else. Change a block or a gap
+ * here and the card grows to suit; nothing downstream needs touching.
+ */
+const CARD_W = 336;
 
-/** How many rows of the board the back can hold. */
-const ROW_MAX = 6;
+/** Padding inside the card's edges. */
+const PAD = S.xl;
+
+/** The verdict band: badge, headline, and the line under it. */
+const BAND_H = 112;
+/** A stat column: its label, a gap, and the figure. */
+const STAT_H = 46;
+/** The boxed line that says what the run changed. */
+const NOTE_H = 58;
+/** The submit status line. */
+const STATUS_H = 14;
+
+const BTN_H = 48;
+const BTN_GAP = S.sm;
+const BUTTONS_H = BTN_H * 3 + BTN_GAP * 2;
+
+/** Where each block starts, measured down from the top of the card. */
+const Y_STATS = BAND_H + S.xl;
+const Y_NOTE = Y_STATS + STAT_H + S.xl;
+const Y_STATUS = Y_NOTE + NOTE_H + S.md;
+const Y_BUTTONS = Y_STATUS + STATUS_H + S.lg;
+const CARD_H = Y_BUTTONS + BUTTONS_H + PAD;
+
+/**
+ * How many rows of the board the back can hold.
+ *
+ * The back has one button where the front has three, so it can afford to show
+ * more of the board rather than leave the space empty.
+ */
+const ROW_MAX = 7;
+const ROW_GAP = 40;
+const Y_ROWS = 112;
 
 interface Row {
   rank: Phaser.GameObjects.Text;
@@ -114,6 +151,8 @@ export class ResultsScene extends Phaser.Scene {
 
   create(): void {
     this.cameras.main.setBackgroundColor(C.bg);
+    // Glass needs something behind it, or it is just a grey box.
+    addBackdrop(this);
 
     this.card = this.add.container(0, 0);
     this.frontGfx = this.add.graphics();
@@ -196,16 +235,16 @@ export class ResultsScene extends Phaser.Scene {
       0,
       0,
       'RUN AGAIN',
-      { width: 240, filled: true, color: C.gold },
+      { width: 240, variant: 'primary' },
       () => void this.playAgain(),
     );
-    this.boardBtn = new Button(this, 0, 0, 'LEADERBOARD', { width: 240, color: C.cyan }, () =>
+    this.boardBtn = new Button(this, 0, 0, 'LEADERBOARD', { width: 240, variant: 'secondary' }, () =>
       this.onBoard(),
     );
-    this.forgeBtn = new Button(this, 0, 0, 'FORGE YOUR OWN', { width: 240, color: C.good }, () =>
+    this.forgeBtn = new Button(this, 0, 0, 'FORGE YOUR OWN', { width: 240, variant: 'secondary', color: C.good }, () =>
       fadeTo(this, () => this.scene.start('cs-levels')),
     );
-    this.backBtn = new Button(this, 0, 0, '← BACK', { width: 240, color: C.panelEdge }, () =>
+    this.backBtn = new Button(this, 0, 0, '← BACK', { width: 240, variant: 'ghost' }, () =>
       this.flip('front'),
     );
   }
@@ -505,10 +544,10 @@ export class ResultsScene extends Phaser.Scene {
   /**
    * The card's size, and the unit everything inside it is measured in.
    *
-   * The card is designed at one size and then shrunk to fit whatever height the
-   * post is given, rather than reflowed. Everything in it — type, padding, the
+   * The card is designed at one size and then shrunk to fit whatever the post
+   * is given, rather than reflowed. Everything in it — type, padding, the
    * buttons — scales by the same `u`, so a short screen gets a smaller card
-   * rather than a broken one.
+   * rather than a broken one, and the rhythm survives the shrink.
    */
   private metrics(L: Layout): { u: number; w: number; h: number; cx: number; cy: number } {
     const fit = Math.min(1, L.ih / (CARD_H * L.ui), L.iw / (CARD_W * L.ui));
@@ -524,60 +563,68 @@ export class ResultsScene extends Phaser.Scene {
     const top = -h / 2;
     const left = -w / 2;
 
-    this.drawFront(u, w, h);
-    this.drawBack(u, w, h);
+    /* --- front: the verdict band ---------------------------------------- */
 
-    /* --- front ---------------------------------------------------------- */
+    this.badge.setPosition(0, top + 26 * u).setFontSize(Math.round(T.micro * u));
+    this.heading.setPosition(0, top + 62 * u).setFontSize(Math.round(28 * u));
+    this.subheading.setPosition(0, top + 92 * u).setFontSize(Math.round(T.label * u));
 
-    this.badge.setPosition(0, top + 20 * u).setFontSize(Math.round(9 * u));
-    this.heading.setPosition(0, top + 58 * u).setFontSize(Math.round(29 * u));
-    this.subheading.setPosition(0, top + 84 * u).setFontSize(Math.round(10 * u));
+    /* --- front: the two figures ----------------------------------------- */
 
-    // Two readings, side by side, the way the card in the reference splits
-    // "your time" from "your best".
+    // Quarter and three-quarter, so each column is centred in its own half
+    // rather than floating at an arbitrary inset.
     this.statLabels.forEach((label, i) => {
-      const x = left + w * (i === 0 ? 0.27 : 0.73);
-      label.setPosition(x, top + 126 * u).setFontSize(Math.round(8.5 * u));
-      this.statValues[i]?.setPosition(x, top + 150 * u).setFontSize(Math.round(23 * u));
+      const x = left + w * (i === 0 ? 0.25 : 0.75);
+      label.setPosition(x, top + (Y_STATS + 6) * u).setFontSize(Math.round(T.micro * u));
+      this.statValues[i]
+        ?.setPosition(x, top + (Y_STATS + STAT_H - 13) * u)
+        .setFontSize(Math.round(26 * u));
     });
 
-    this.noteMain.setPosition(0, top + 196 * u).setFontSize(Math.round(11.5 * u));
-    this.noteSub.setPosition(0, top + 217 * u).setFontSize(Math.round(9.5 * u));
-    this.statusText.setPosition(0, top + 243 * u).setFontSize(Math.round(10 * u));
+    /* --- front: the note, and the status under it ------------------------ */
 
-    /* --- back ----------------------------------------------------------- */
+    this.noteMain.setPosition(0, top + (Y_NOTE + 21) * u).setFontSize(Math.round(T.body * u));
+    this.noteSub.setPosition(0, top + (Y_NOTE + 41) * u).setFontSize(Math.round(T.micro * u));
+    this.statusText
+      .setPosition(0, top + (Y_STATUS + STATUS_H / 2) * u)
+      .setFontSize(Math.round(T.micro * u));
 
-    this.boardTitle.setPosition(0, top + 32 * u).setFontSize(Math.round(16 * u));
-    this.boardCount.setPosition(0, top + 54 * u).setFontSize(Math.round(9.5 * u));
-    this.boardStatus.setPosition(0, top + 130 * u).setFontSize(Math.round(10.5 * u));
+    /* --- back ------------------------------------------------------------ */
+
+    this.boardTitle.setPosition(0, top + 40 * u).setFontSize(Math.round(T.heading * u));
+    this.boardCount.setPosition(0, top + 66 * u).setFontSize(Math.round(T.micro * u));
+    this.boardStatus
+      .setPosition(0, top + (Y_ROWS + ROW_GAP * 1.5) * u)
+      .setFontSize(Math.round(T.body * u))
+      .setWordWrapWidth(w - PAD * 2 * u);
 
     this.rows.forEach((row, i) => {
-      const y = top + 84 * u + i * 30 * u;
-      row.rank.setPosition(left + 18 * u, y).setFontSize(Math.round(9.5 * u));
-      row.who.setPosition(left + 46 * u, y).setFontSize(Math.round(11.5 * u));
-      row.score.setPosition(left + w - 18 * u, y).setFontSize(Math.round(11.5 * u));
+      const y = top + (Y_ROWS + i * ROW_GAP) * u;
+      row.rank.setPosition(left + PAD * u, y).setFontSize(Math.round(T.micro * u));
+      row.who.setPosition(left + (PAD + S.h1) * u, y).setFontSize(Math.round(T.body * u));
+      row.score.setPosition(left + w - PAD * u, y).setFontSize(Math.round(T.body * u));
     });
 
-    /* --- buttons -------------------------------------------------------- */
+    /* --- buttons --------------------------------------------------------- */
 
-    const bw = w - 36 * u;
-    const bh = 44 * u;
-    const gap = 8 * u;
-    let by = cy + top + 274 * u + bh / 2;
+    const bw = w - PAD * 2 * u;
+    const bh = BTN_H * u;
+    const slot = (i: number): number =>
+      cy + top + (Y_BUTTONS + i * (BTN_H + BTN_GAP)) * u + bh / 2;
 
-    this.againBtn.setPosition(cx, by).setSize(bw, bh).setFontSize(15 * u);
-    by += bh + gap;
-    this.boardBtn.setPosition(cx, by).setSize(bw, bh).setFontSize(14 * u);
-    by += bh + gap;
+    this.againBtn.setPosition(cx, slot(0)).setSize(bw, bh).setFontSize(T.subhead * u);
+    this.boardBtn.setPosition(cx, slot(1)).setSize(bw, bh).setFontSize(T.body * u);
+    this.forgeBtn.setPosition(cx, slot(2)).setSize(bw, bh).setFontSize(T.body * u);
 
-    this.forgeBtn.setPosition(cx, by).setSize(bw, bh).setFontSize(13 * u);
+    // The back has one button, and it sits in the last slot so the card's
+    // bottom edge does not appear to move when it turns over.
+    this.backBtn.setPosition(cx, slot(2)).setSize(bw, bh).setFontSize(T.body * u);
 
-    this.backBtn
-      .setPosition(cx, cy + top + 274 * u + bh / 2)
-      .setSize(bw, bh)
-      .setFontSize(14 * u);
-
+    // Type is sized before the faces are drawn: the record pill is measured
+    // from the label it wraps, so drawing first would size it from stale type.
     this.fitLabels();
+    this.drawFront(u, w, h);
+    this.drawBack(u, w, h);
     this.playProxy?.sync();
   }
 
@@ -585,66 +632,92 @@ export class ResultsScene extends Phaser.Scene {
     const g = this.frontGfx;
     const x = -w / 2;
     const y = -h / 2;
-    const r = 18 * u;
+    const r = R.xl * u;
     const won = this.tally.reachedGoal;
+    const accent = won ? C.goal : C.danger;
     g.clear();
 
-    // The card itself.
-    g.fillStyle(C.panel, 0.97);
-    g.fillRoundedRect(x, y, w, h, r);
+    this.drawShell(g, x, y, w, h, r, u);
 
-    // The verdict band across the top, in the colour of the outcome. This is
-    // the whole point of the face: green means you did it.
-    const bandH = 100 * u;
-    g.fillStyle(won ? C.goal : C.danger, won ? 0.16 : 0.13);
-    g.fillRoundedRect(x, y, w, bandH, { tl: r, tr: r, bl: 0, br: 0 });
-    g.lineStyle(Math.max(1, 1.5 * u), won ? C.goal : C.danger, 0.35);
-    g.lineBetween(x, y + bandH, x + w, y + bandH);
+    // The verdict band. This is the point of the face: green means you did it,
+    // and it lands before a single word has been read.
+    g.fillStyle(accent, won ? 0.15 : 0.12);
+    g.fillRoundedRect(x, y, w, BAND_H * u, { tl: r, tr: r, bl: 0, br: 0 });
+    g.lineStyle(Math.max(1, 1.5 * u), accent, 0.4);
+    g.lineBetween(x, y + BAND_H * u, x + w, y + BAND_H * u);
 
-    // The record pill, drawn only when there is a record to sit in it.
+    // The record pill, drawn only when there is a record to sit in it, and
+    // sized from the label now that the label knows how big it is.
     if (this.result?.tookLead) {
-      const pw = this.badge.width + 22 * u;
-      const ph = 17 * u;
-      g.fillStyle(C.gold, 0.92);
-      g.fillRoundedRect(-pw / 2, y + 20 * u - ph / 2, pw, ph, ph / 2);
+      const pw = this.badge.width + S.xxl * u;
+      const ph = S.xl * u;
+      g.fillStyle(C.gold, 0.95);
+      g.fillRoundedRect(-pw / 2, y + 26 * u - ph / 2, pw, ph, ph / 2);
     }
 
-    // The line that says what changed, boxed so it reads as the headline of
-    // the lower half rather than another stat.
-    const nx = x + 16 * u;
-    const nw = w - 32 * u;
-    const ny = y + 182 * u;
-    const nh = 50 * u;
-    g.fillStyle(C.gold, 0.07);
-    g.fillRoundedRect(nx, ny, nw, nh, 12 * u);
-    g.lineStyle(Math.max(1, 1.5 * u), C.gold, 0.4);
-    g.strokeRoundedRect(nx, ny, nw, nh, 12 * u);
+    // A hairline between the two figures. Without it they read as one wide
+    // number that happens to have a gap in the middle.
+    const sy = y + Y_STATS * u;
+    g.lineStyle(Math.max(1, u), C.panelEdge, 0.9);
+    g.lineBetween(0, sy + S.sm * u, 0, sy + (STAT_H - S.xs) * u);
 
-    g.lineStyle(Math.max(1, 1.5 * u), C.panelEdge, 0.9);
-    g.strokeRoundedRect(x, y, w, h, r);
+    // The line that says what the run changed, boxed so it reads as the
+    // headline of the lower half rather than as a third statistic.
+    const nx = x + PAD * u;
+    const nw = w - PAD * 2 * u;
+    const ny = y + Y_NOTE * u;
+    const nh = NOTE_H * u;
+    g.fillStyle(C.gold, 0.06);
+    g.fillRoundedRect(nx, ny, nw, nh, R.md * u);
+    g.lineStyle(Math.max(1, 1.5 * u), C.gold, 0.35);
+    g.strokeRoundedRect(nx, ny, nw, nh, R.md * u);
   }
 
   private drawBack(u: number, w: number, h: number): void {
     const g = this.backGfx;
     const x = -w / 2;
     const y = -h / 2;
-    const r = 18 * u;
+    const r = R.xl * u;
     g.clear();
 
-    g.fillStyle(C.panel, 0.97);
-    g.fillRoundedRect(x, y, w, h, r);
-    g.lineStyle(Math.max(1, 1.5 * u), C.panelEdge, 0.9);
-    g.strokeRoundedRect(x, y, w, h, r);
-    g.lineStyle(Math.max(1, 1.5 * u), C.panelEdge, 0.7);
-    g.lineBetween(x + 16 * u, y + 68 * u, x + w - 16 * u, y + 68 * u);
+    this.drawShell(g, x, y, w, h, r, u);
+    g.lineStyle(Math.max(1, 1.5 * u), C.panelEdge, 0.8);
+    g.lineBetween(x + PAD * u, y + 86 * u, x + w - PAD * u, y + 86 * u);
 
-    // Your own row is lit the way the goal is lit, so it is found without
-    // being read.
+    // Your own row is lit the way the goal is lit, so it is found without being
+    // read. The label carries a marker too — colour is not doing this alone.
     const mine = this.leaders.findIndex((p) => p.isYou);
     if (mine >= 0 && mine < ROW_MAX) {
-      const ry = y + 84 * u + mine * 30 * u;
+      const ry = y + (Y_ROWS + mine * ROW_GAP) * u;
       g.fillStyle(C.goal, 0.1);
-      g.fillRoundedRect(x + 10 * u, ry - 13 * u, w - 20 * u, 26 * u, 8 * u);
+      g.fillRoundedRect(
+        x + S.md * u,
+        ry - (ROW_GAP / 2 - S.xs) * u,
+        w - S.xxl * u,
+        (ROW_GAP - S.sm) * u,
+        R.sm * u,
+      );
     }
+  }
+
+  /**
+   * The card body both faces share.
+   *
+   * A seat of shadow under the bottom edge and a lit hairline along the top is
+   * what stops a flat rounded rectangle reading as a placeholder: it gives the
+   * card a direction to be lit from, and therefore a thickness.
+   */
+  private drawShell(
+    g: Phaser.GameObjects.Graphics,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    r: number,
+    u: number,
+  ): void {
+    // The card is the heaviest pane in the game — it is nothing but small text
+    // — so it takes the denser fill rather than the default.
+    drawGlass(g, x, y, w, h, r, u, { fill: GLASS.fillDense });
   }
 }

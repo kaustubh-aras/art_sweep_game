@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
-import { C, FONT, hex } from './theme';
+import { C, FONT, GLASS, M, R, T, duration, hex } from './theme';
+import { drawGlass } from './glass';
 import { sfx } from './sfx';
 import { readInsets, type Insets } from '../ui/layout';
 import { dpr } from '../ui/viewport';
@@ -58,8 +59,15 @@ export function layoutOf(scene: Phaser.Scene): Layout {
   return { w, h, safe, x, y, iw, ih, ui, dpr: d, cx: x + iw / 2 };
 }
 
-/** Minimum comfortable touch target, in design pixels. */
-export const TOUCH_MIN = 46;
+/**
+ * Minimum touch target, in design pixels.
+ *
+ * 48 rather than 44: it satisfies both the iOS and the Android floor, and this
+ * is a game played with a thumb while something is moving on screen. The
+ * matching rule — that targets are never closer together than `S.sm` — is kept
+ * by the screens, which stack buttons with a token gap.
+ */
+export const TOUCH_MIN = 48;
 
 export function text(
   scene: Phaser.Scene,
@@ -103,12 +111,42 @@ export function fitText(
   }
 }
 
+/**
+ * What a button is *for*, rather than what colour it is.
+ *
+ * Naming the job instead of the paint is what keeps "one primary action per
+ * screen" enforceable: a screen with two `primary` buttons is now obviously
+ * wrong when you read it, where two gold ones were just a colour choice.
+ */
+export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger';
+
+interface VariantStyle {
+  /** The accent: the rim, and the body of a solid face. */
+  accent: number;
+  /** How strongly the face is filled. Weight is the hierarchy, not hue. */
+  fill: number;
+  border: number;
+  label: number;
+  /** Solid controls are opaque material; the rest are panes of glass. */
+  solid?: boolean;
+}
+
+const VARIANTS: Record<ButtonVariant, VariantStyle> = {
+  // The one thing the screen wants you to do. Solid, warm, unmissable.
+  primary: { accent: C.gold, fill: 0.95, border: 1, label: C.bg, solid: true },
+  // A real alternative, but subordinate: a pane with a lit rim.
+  secondary: { accent: C.cyan, fill: 0.1, border: 0.7, label: C.ink },
+  // Available, not advertised. Back, cancel, menu.
+  ghost: { accent: 0xffffff, fill: 0.1, border: 0.22, label: C.dim },
+  danger: { accent: C.danger, fill: 0.1, border: 0.8, label: C.ink },
+};
+
 export interface ButtonOptions {
   width: number;
   height?: number;
+  variant?: ButtonVariant;
+  /** Overrides the variant's accent, for the few buttons that carry a meaning. */
   color?: number;
-  /** Filled buttons read as the primary action; outlined ones as secondary. */
-  filled?: boolean;
   fontSize?: number;
   enabled?: boolean;
 }
@@ -120,10 +158,11 @@ export class Button {
   private zone: Phaser.GameObjects.Zone;
   private w: number;
   private h: number;
-  private color: number;
-  private filled: boolean;
+  private style: VariantStyle;
   private enabled: boolean;
   private down = false;
+  /** The radius the face is drawn with, scaled with everything else. */
+  private radius: number = R.md;
 
   private readonly scene: Phaser.Scene;
 
@@ -136,20 +175,25 @@ export class Button {
     private readonly onClick: () => void,
   ) {
     this.scene = scene;
+    const ui = layoutOf(scene).ui;
     this.w = opts.width;
     // Never smaller than a comfortable touch target, whatever the caller asks.
     // The floor is in design pixels, so it is scaled like everything else.
-    this.h = Math.max(opts.height ?? 52, TOUCH_MIN * layoutOf(scene).ui);
-    this.color = opts.color ?? C.cyan;
-    this.filled = opts.filled ?? false;
+    this.h = Math.max(opts.height ?? TOUCH_MIN * ui, TOUCH_MIN * ui);
+    this.radius = R.md * ui;
+
+    const base = VARIANTS[opts.variant ?? 'secondary'];
+    // A caller may recolour a variant without giving up its weight — the green
+    // BUILD button is a secondary action that happens to mean something.
+    this.style = opts.color ? { ...base, accent: opts.color } : base;
     this.enabled = opts.enabled ?? true;
 
     this.gfx = scene.add.graphics();
     this.label = scene.add
       .text(0, 0, caption, {
         fontFamily: FONT,
-        fontSize: `${Math.round(opts.fontSize ?? 17)}px`,
-        color: hex(C.ink),
+        fontSize: `${Math.round(opts.fontSize ?? T.subhead * ui)}px`,
+        color: hex(this.style.label),
       })
       .setOrigin(0.5);
 
@@ -169,24 +213,47 @@ export class Button {
     this.redraw();
   }
 
+  /**
+   * Paints the face for its current state.
+   *
+   * A press deepens the fill and tightens the border rather than moving the
+   * button: nudging it down by a pixel is the classic way to make a stack of
+   * buttons jitter, and jitter under a thumb reads as a misfire.
+   *
+   * Disabled is carried by opacity *and* by the zone being switched off, so it
+   * is never merely a colour that a player might try to tap anyway.
+   */
   private redraw(): void {
     const g = this.gfx;
     const hw = this.w / 2;
     const hh = this.h / 2;
+    const st = this.style;
+    const u = this.radius / R.md;
     g.clear();
 
-    const alpha = this.enabled ? 1 : 0.35;
-    const press = this.down ? 0.22 : 0;
+    const alpha = this.enabled ? 1 : 0.38;
+    const press = this.down ? 0.14 : 0;
 
-    if (this.filled) {
-      g.fillStyle(this.color, (0.24 + press) * alpha);
-      g.fillRoundedRect(-hw, -hh, this.w, this.h, 12);
+    if (st.solid) {
+      // The one prominent control on a screen is a solid material, not glass.
+      // Apple does the same: glass is the surface things sit *on*, and the
+      // action you are meant to take is the thing sitting on it.
+      g.fillStyle(C.bg, 0.3 * alpha);
+      g.fillRoundedRect(-hw, -hh + 4 * u, this.w, this.h, this.radius);
+      g.fillStyle(st.accent, (st.fill - press) * alpha);
+      g.fillRoundedRect(-hw, -hh, this.w, this.h, this.radius);
+      g.lineStyle(Math.max(1, u), 0xffffff, 0.3 * alpha);
+      g.lineBetween(-hw + this.radius * 0.7, -hh + u, hw - this.radius * 0.7, -hh + u);
     } else {
-      g.fillStyle(C.panel, (0.85 + press) * alpha);
-      g.fillRoundedRect(-hw, -hh, this.w, this.h, 12);
+      // Everything else is a pane of the same glass the panels are made of,
+      // with its accent carried by the rim rather than by a wash of colour.
+      drawGlass(g, -hw, -hh, this.w, this.h, this.radius, u, {
+        fill: (GLASS.fill + press) * alpha,
+        raised: false,
+      });
+      g.lineStyle(Math.max(1, 1.25 * u), st.accent, st.border * alpha);
+      g.strokeRoundedRect(-hw, -hh, this.w, this.h, this.radius);
     }
-    g.lineStyle(2, this.color, (this.filled ? 0.95 : 0.55) * alpha);
-    g.strokeRoundedRect(-hw, -hh, this.w, this.h, 12);
 
     this.label.setAlpha(alpha);
   }
@@ -261,8 +328,10 @@ export class Button {
    * a button that has to fit a narrow phone needs to get wider, not distorted.
    */
   setSize(w: number, h?: number): this {
+    const ui = layoutOf(this.scene).ui;
     this.w = w;
-    this.h = Math.max(h ?? this.h, TOUCH_MIN * layoutOf(this.scene).ui);
+    this.h = Math.max(h ?? this.h, TOUCH_MIN * ui);
+    this.radius = R.md * ui;
     this.zone.setSize(this.w, this.h);
     if (this.zone.input) {
       this.zone.input.hitArea.setTo(0, 0, this.w, this.h);
@@ -301,21 +370,54 @@ export function panel(
   accent: number = C.panelEdge,
   fillAlpha = 0.9,
 ): Phaser.GameObjects.Graphics {
+  const ui = layoutOf(scene).ui;
   const g = scene.add.graphics();
-  g.fillStyle(C.panel, fillAlpha);
-  g.fillRoundedRect(x, y, w, h, 14);
-  g.lineStyle(1.5, accent, 0.5);
-  g.strokeRoundedRect(x, y, w, h, 14);
+  drawGlass(g, x, y, w, h, R.lg * ui, ui, { fill: fillAlpha * GLASS.fill });
+  if (accent !== C.panelEdge) {
+    g.lineStyle(Math.max(1, 1.25 * ui), accent, 0.45);
+    g.strokeRoundedRect(x, y, w, h, R.lg * ui);
+  }
   return g;
 }
 
-/** Fades the scene in, so no screen ever snaps into existence. */
-export function fadeIn(scene: Phaser.Scene, ms = 220): void {
-  scene.cameras.main.fadeIn(ms, 7, 11, 22);
+/**
+ * Fades the scene in, so no screen ever snaps into existence.
+ *
+ * Every transition in the game goes through here or `fadeTo`, which is what
+ * makes honouring `prefers-reduced-motion` a single decision rather than one
+ * each screen has to remember. At zero duration Phaser still fires the
+ * completion event, so the handover below stays intact.
+ */
+export function fadeIn(scene: Phaser.Scene, ms = M.enter): void {
+  scene.cameras.main.fadeIn(duration(ms), 7, 11, 22);
 }
 
-/** Runs `fn` after fading out, for a clean handover between screens. */
-export function fadeTo(scene: Phaser.Scene, fn: () => void, ms = 180): void {
-  scene.cameras.main.fadeOut(ms, 7, 11, 22);
+/**
+ * Runs `fn` after fading out, for a clean handover between screens.
+ *
+ * Shorter than the fade in by default: leaving quickly reads as responsive,
+ * where arriving quickly reads as abrupt.
+ */
+export function fadeTo(scene: Phaser.Scene, fn: () => void, ms = M.exit): void {
+  scene.cameras.main.fadeOut(duration(ms), 7, 11, 22);
   scene.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, fn);
+}
+
+/**
+ * The empty state for any list: says why it is empty, and what to do about it.
+ *
+ * A blank rectangle is the one thing a list must never be — it reads as broken
+ * where a sentence reads as "nothing here yet, and here is how that changes".
+ */
+export function emptyState(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  message: string,
+  width: number,
+): Phaser.GameObjects.Text {
+  const ui = layoutOf(scene).ui;
+  const t = text(scene, x, y, message, T.body * ui, C.dim);
+  t.setAlign('center').setWordWrapWidth(width).setLineSpacing(4 * ui);
+  return t;
 }
