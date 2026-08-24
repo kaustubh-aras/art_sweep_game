@@ -30,6 +30,7 @@
         --dim: #8497b5;
         --gold: #ffc63d;
         --cyan: #3df0ff;
+        --faint: #475777;
         --font: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       }
 
@@ -173,6 +174,314 @@
       @media (prefers-reduced-motion: reduce) {
         #splash .dial::after {
           animation: none;
+        }
+      }
+
+      /* The splash card: the post as it reads in the feed, before the game
+         exists. It opens with the course itself — the arena drawn from its own
+         layout data — because the picture answers "what am I being asked to
+         do?" faster than any line of copy on the card could. */
+      #splash.splash-card-mode {
+        gap: 0;
+        padding: 12px;
+        justify-content: flex-start;
+        overflow-y: auto;
+      }
+
+      /* Auto margins rather than `center`, so a card taller than the post can
+         still be scrolled to its top instead of being clipped there. */
+      .splash-card {
+        width: 100%;
+        max-width: 420px;
+        margin: auto 0;
+        overflow: hidden;
+        border: 1px solid #1a2540;
+        border-radius: 18px;
+        background: linear-gradient(180deg, #0e1729, var(--field));
+        box-shadow: 0 18px 44px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+      }
+
+      /* ---- the artwork ---- */
+
+      .art {
+        position: relative;
+        height: 152px;
+        background: var(--bg);
+      }
+
+      .art-svg {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+      }
+
+      /* The picture is shown whole and the words sit under it; all this does is
+         stop the illustration ending on a hard line. */
+      .art-fade {
+        position: absolute;
+        inset: auto 0 0;
+        height: 34px;
+        background: linear-gradient(180deg, rgba(13, 20, 38, 0), var(--field));
+      }
+
+      .card-head {
+        padding: 11px 16px 0;
+      }
+
+      /* Round and difficulty share one line above the name. */
+      .art-meta {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .art-round {
+        font-size: 10px;
+        letter-spacing: 0.22em;
+        color: var(--cyan);
+      }
+
+      .art-pips {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 9px;
+        letter-spacing: 0.1em;
+        color: var(--dim);
+        white-space: nowrap;
+      }
+
+      /* Difficulty as a row of bars — a level meter, in the colour of time. */
+      .pip {
+        width: 4px;
+        height: 11px;
+        border-radius: 1px;
+        background: #2b3a5c;
+      }
+
+      .pip.on {
+        background: var(--gold);
+        box-shadow: 0 0 7px rgba(255, 198, 61, 0.55);
+      }
+
+      .art-title {
+        margin: 5px 0 3px;
+        font-size: clamp(23px, 7vw, 29px);
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        line-height: 1;
+        color: var(--fg);
+      }
+
+      .art-blurb {
+        margin: 0;
+        font-size: 11px;
+        line-height: 1.35;
+        color: var(--dim);
+      }
+
+      /* ---- the board ---- */
+
+      .board,
+      .stats,
+      .card-foot {
+        margin-left: 16px;
+        margin-right: 16px;
+      }
+
+      .board {
+        margin-top: 15px;
+      }
+
+      .section-label {
+        margin: 0 0 8px;
+        font-size: 10px;
+        font-weight: 400;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: var(--dim);
+      }
+
+      .board-row {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        padding: 6px 0;
+      }
+
+      .rank {
+        width: 15px;
+        font-size: 11px;
+        color: var(--faint);
+        text-align: right;
+      }
+
+      .who {
+        max-width: 42%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 12.5px;
+        color: var(--fg);
+      }
+
+      /* Each score against the leader's, so the gap is a shape. */
+      .bar {
+        flex: 1;
+        min-width: 18px;
+        height: 3px;
+        border-radius: 2px;
+        background: #16223c;
+      }
+
+      .bar i {
+        display: block;
+        height: 100%;
+        border-radius: 2px;
+        background: linear-gradient(90deg, #2b6f8a, var(--cyan));
+      }
+
+      .score {
+        min-width: 52px;
+        font-size: 12.5px;
+        font-weight: 700;
+        color: var(--fg);
+        text-align: right;
+      }
+
+      /* Your own row, lit the colour of time — the only row on the card the
+         reader can do anything about. */
+      .board-row.you .who,
+      .board-row.you .score,
+      .board-row.you .rank {
+        color: var(--gold);
+      }
+
+      .board-row.you .who {
+        font-weight: 700;
+      }
+
+      .board-row.you .bar i {
+        background: linear-gradient(90deg, #8a6410, var(--gold));
+      }
+
+      .board-empty {
+        margin: 0;
+        font-size: 12px;
+        color: var(--dim);
+      }
+
+      /* ---- the readings ---- */
+
+      .stats {
+        display: flex;
+        margin-top: 14px;
+        padding: 11px 0;
+        border-top: 1px solid #16223c;
+        border-bottom: 1px solid #16223c;
+      }
+
+      .stat {
+        flex: 1;
+        text-align: center;
+      }
+
+      .stat + .stat {
+        border-left: 1px solid #16223c;
+      }
+
+      .stat-value {
+        display: block;
+        font-size: 19px;
+        font-weight: 700;
+        line-height: 1.1;
+        color: var(--fg);
+      }
+
+      .stat.gold .stat-value {
+        color: var(--gold);
+      }
+
+      .stat-label {
+        display: block;
+        margin-top: 3px;
+        font-size: 10px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--dim);
+      }
+
+      /* ---- the offer ---- */
+
+      .card-cta {
+        display: block;
+        width: calc(100% - 32px);
+        margin: 14px 16px 0;
+        padding: 13px 12px;
+        border: 0;
+        border-radius: 12px;
+        background: linear-gradient(180deg, #ffd464, #f0a913);
+        color: #1a1000;
+        font-family: var(--font);
+        cursor: pointer;
+        box-shadow: 0 8px 22px rgba(255, 179, 40, 0.22);
+      }
+
+      .card-cta:active {
+        background: linear-gradient(180deg, #f5c451, #dd9a0c);
+        transform: translateY(1px);
+      }
+
+      .cta-main {
+        display: block;
+        font-size: 16px;
+        font-weight: 700;
+        letter-spacing: 0.16em;
+      }
+
+      .cta-sub {
+        display: block;
+        margin-top: 3px;
+        font-size: 10px;
+        letter-spacing: 0.08em;
+        opacity: 0.72;
+      }
+
+      .card-foot {
+        margin-top: 10px;
+        margin-bottom: 14px;
+        text-align: center;
+        font-size: 11px;
+        line-height: 1.5;
+        color: #64769a;
+      }
+
+      .card-foot b {
+        color: var(--dim);
+        font-weight: 700;
+      }
+
+      /* Short posts: the artwork gives up height first, because the button
+         must stay above the fold whatever the host gives us. */
+      @media (max-height: 620px) {
+        .art {
+          height: 120px;
+        }
+
+        .board {
+          margin-top: 11px;
+        }
+
+        .stats {
+          margin-top: 11px;
+          padding: 9px 0;
+        }
+
+        .card-cta {
+          margin-top: 11px;
+          padding: 11px 12px;
         }
       }
     </style>

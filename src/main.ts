@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { gameConfig } from './clockshot/game';
 import { initViewport } from './ui/viewport';
 import { sfx } from './clockshot/sfx';
+import { mountSplash } from './clockshot/splash';
 
 // Single game instance. Inside Devvit Web this file is the webview entrypoint.
 const game = new Phaser.Game(gameConfig);
@@ -55,10 +56,17 @@ document.addEventListener(
   { passive: false },
 );
 
-// Hand over from the HTML splash once Phaser has painted its first frame.
-game.events.once(Phaser.Core.Events.READY, () => {
-  const splash = document.getElementById('splash');
-  if (!splash) return;
-  splash.classList.add('gone');
-  window.setTimeout(() => splash.remove(), 400);
+/**
+ * The splash card holds the screen until the player asks for the game.
+ *
+ * Phaser boots underneath it either way, so the menu is already drawn and the
+ * board already fetched by the time the card comes away — the tap opens
+ * something finished rather than starting a load.
+ *
+ * If the card itself fails there is no world in which a player should be left
+ * looking at a spinner, so the overlay goes regardless.
+ */
+void mountSplash().catch((err: unknown) => {
+  console.warn('[clockshot] splash failed', err);
+  document.getElementById('splash')?.remove();
 });

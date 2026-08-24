@@ -29,6 +29,8 @@ class Store {
 
   /** Set when the last refresh failed, so screens can show a reconnect state. */
   lastError: NetError | null = null;
+  /** The refresh currently in flight, so simultaneous callers share one call. */
+  private inflight: Promise<void> | null = null;
   loaded = false;
 
   private listeners = new Set<Listener>();
@@ -96,7 +98,24 @@ class Store {
     this.emit();
   }
 
+  /**
+   * Refreshes the board, once, however many callers ask at the same moment.
+   *
+   * The splash card and the boot scene both want this state the instant the
+   * post opens. Sharing the call in flight makes that one request instead of
+   * two identical ones racing each other.
+   */
   async refresh(): Promise<void> {
+    if (this.inflight) return this.inflight;
+    this.inflight = this.fetchState();
+    try {
+      await this.inflight;
+    } finally {
+      this.inflight = null;
+    }
+  }
+
+  private async fetchState(): Promise<void> {
     try {
       this.apply(await api.state());
     } catch (err) {

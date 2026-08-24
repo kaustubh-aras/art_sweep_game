@@ -54,6 +54,14 @@ export interface Arena {
   name: string;
   /** One line telling a player what this place asks of them. */
   blurb: string;
+  /**
+   * How hard this place is to clear, one to five.
+   *
+   * A hand-set label rather than a measurement: it is what the splash card
+   * shows a player who has never opened the game, before there is any clear
+   * rate to read it from.
+   */
+  difficulty: 1 | 2 | 3 | 4 | 5;
   world: { width: number; height: number };
   /** Solid ground. Gaps between these are pits the player can fall through. */
   platforms: readonly Rect[];
@@ -106,6 +114,7 @@ const GANTRY: Arena = {
   id: 'gantry',
   name: 'THE GANTRY',
   blurb: 'three islands, two pits, a long high crossing',
+  difficulty: 2,
   world: { width: 1800, height: 1500 },
 
   platforms: [
@@ -282,6 +291,7 @@ const WELL: Arena = {
   id: 'well',
   name: 'THE WELL',
   blurb: 'one shaft, straight up — the prize is at the top',
+  difficulty: 3,
   world: { width: 1100, height: 2200 },
 
   platforms: [
@@ -413,6 +423,7 @@ const SPAN: Arena = {
   id: 'span',
   name: 'THE SPAN',
   blurb: 'wide open, barely any floor — keep your speed',
+  difficulty: 4,
   world: { width: 2600, height: 900 },
 
   platforms: [
