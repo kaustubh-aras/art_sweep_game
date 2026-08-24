@@ -1,0 +1,425 @@
+/**
+ * The interface layer's stylesheet.
+ *
+ * These tokens mirror `theme.ts` exactly — the same palette, the same 4-point
+ * spacing rhythm, the same type scale, the same solved glass values. Two
+ * renderers, one design system: a screen built here and a screen drawn on the
+ * canvas have to be indistinguishable, and they can only stay that way if
+ * neither side gets to invent a number.
+ *
+ * The contrast figures in the palette are measured, not guessed, and the glass
+ * values were solved against the brightest point of the backdrop. See the
+ * comments in `theme.ts` before changing any of them.
+ */
+
+#cs-ui-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  /* The layer is a sheet of glass over the game: taps fall through it to the
+     canvas, and only actual controls opt back in. Without this, an empty
+     interface layer would eat every swing. */
+  pointer-events: none;
+  overflow: hidden;
+
+  /* --- palette (see theme.ts) --- */
+  --cs-bg: #070b16;
+  --cs-panel: #0d1426;
+  --cs-panel-edge: #1d2a44;
+  --cs-ink: #e6edf8;
+  --cs-dim: #9db0cd;
+  --cs-faint: #93a8c9;
+  --cs-gold: #ffc63d;
+  --cs-cyan: #3df0ff;
+  --cs-good: #3dffa0;
+  --cs-danger: #ff5a3d;
+
+  /* --- glass --- */
+  --cs-glass: rgba(255, 255, 255, 0.09);
+  --cs-glass-dense: rgba(255, 255, 255, 0.06);
+  --cs-rim: rgba(255, 255, 255, 0.2);
+  --cs-rim-top: rgba(255, 255, 255, 0.42);
+  --cs-blur: 16px;
+
+  /* --- spacing, 4-point --- */
+  --cs-xs: 4px;
+  --cs-sm: 8px;
+  --cs-md: 12px;
+  --cs-lg: 16px;
+  --cs-xl: 20px;
+  --cs-xxl: 24px;
+  --cs-h1: 32px;
+
+  /* --- radii --- */
+  --cs-r-sm: 8px;
+  --cs-r-md: 12px;
+  --cs-r-lg: 16px;
+  --cs-r-xl: 20px;
+
+  /* --- motion --- */
+  --cs-fast: 140ms;
+  --cs-base: 200ms;
+
+  --cs-font: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  font-family: var(--cs-font);
+  color: var(--cs-ink);
+}
+
+.cs-screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Safe areas, so nothing lands under a notch or a home indicator. */
+  padding: max(env(safe-area-inset-top), var(--cs-md)) max(env(safe-area-inset-right), var(--cs-md))
+    max(env(safe-area-inset-bottom), var(--cs-md)) max(env(safe-area-inset-left), var(--cs-md));
+  pointer-events: none;
+}
+
+/* ---------------------------------------------------------------- glass -- */
+
+.cs-glass {
+  background: var(--cs-glass);
+  border: 1px solid var(--cs-rim);
+  border-radius: var(--cs-r-xl);
+  backdrop-filter: blur(var(--cs-blur)) saturate(150%);
+  -webkit-backdrop-filter: blur(var(--cs-blur)) saturate(150%);
+  /* Somewhere to sit, and the light landing on the top edge. */
+  box-shadow:
+    0 18px 48px rgba(4, 7, 14, 0.55),
+    inset 0 1px 0 var(--cs-rim-top);
+}
+
+/* A pane carrying a lot of small type takes *less* white, not more: every
+   point of white here is contrast taken from the text on it. */
+.cs-glass-dense {
+  background: var(--cs-glass-dense);
+}
+
+/* ---------------------------------------------------------------- cards -- */
+
+.cs-card {
+  pointer-events: auto;
+  width: 100%;
+  max-width: 360px;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* --------------------------------------------------------------- buttons -- */
+
+.cs-btn {
+  pointer-events: auto;
+  display: block;
+  width: 100%;
+  /* 48 clears both the 44pt iOS and 48dp Android minimums. */
+  min-height: 48px;
+  padding: var(--cs-md) var(--cs-lg);
+  border-radius: var(--cs-r-md);
+  border: 1px solid var(--cs-rim);
+  background: var(--cs-glass);
+  color: var(--cs-ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  cursor: pointer;
+  backdrop-filter: blur(var(--cs-blur));
+  -webkit-backdrop-filter: blur(var(--cs-blur));
+  /* Colour and opacity only: a button that moves under a thumb reads as a
+     misfire, and a stack of them jitters. */
+  transition:
+    background var(--cs-fast) ease,
+    border-color var(--cs-fast) ease,
+    opacity var(--cs-fast) ease;
+}
+
+.cs-btn:active {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+/* A visible focus ring is the whole reason this layer exists rather than more
+   canvas. Never remove it without replacing it. */
+.cs-btn:focus-visible {
+  outline: 2px solid var(--cs-cyan);
+  outline-offset: 2px;
+}
+
+.cs-btn[disabled] {
+  opacity: 0.38;
+  cursor: default;
+}
+
+/* The one thing the screen wants you to do: solid material, not glass. */
+.cs-btn-primary {
+  background: linear-gradient(180deg, #ffd464, #f0a913);
+  border-color: transparent;
+  color: #1a1000;
+  font-size: 15px;
+  box-shadow:
+    0 8px 22px rgba(255, 179, 40, 0.26),
+    inset 0 1px 0 rgba(255, 255, 255, 0.45);
+}
+
+.cs-btn-primary:active {
+  background: linear-gradient(180deg, #f5c451, #dd9a0c);
+}
+
+.cs-btn-secondary {
+  border-color: rgba(61, 240, 255, 0.5);
+}
+
+.cs-btn-good {
+  border-color: rgba(61, 255, 160, 0.45);
+  color: #9dffcf;
+}
+
+.cs-btn-ghost {
+  border-color: var(--cs-rim);
+  color: var(--cs-dim);
+}
+
+.cs-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cs-sm);
+  padding: var(--cs-lg);
+  padding-top: var(--cs-md);
+}
+
+/* ------------------------------------------------------------------ type -- */
+
+.cs-label {
+  margin: 0;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--cs-faint);
+}
+
+.cs-note-main {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--cs-gold);
+}
+
+.cs-note-sub {
+  margin: var(--cs-xs) 0 0;
+  font-size: 10px;
+  color: var(--cs-dim);
+}
+
+/* ----------------------------------------------------------- the flip -- */
+
+/* The card turns over rather than being replaced, because the score and the
+   board answer the same question and swapping screens would read as leaving. */
+.cs-flip {
+  position: relative;
+  transform-style: preserve-3d;
+  transition: transform 460ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.cs-flip[data-face='back'] {
+  transform: rotateY(180deg);
+}
+
+.cs-face {
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.cs-face-back {
+  position: absolute;
+  inset: 0;
+  transform: rotateY(180deg);
+}
+
+/* ------------------------------------------------------------- results -- */
+
+.cs-band {
+  padding: var(--cs-xl) var(--cs-lg) var(--cs-lg);
+  text-align: center;
+  border-bottom: 1px solid rgba(61, 255, 160, 0.35);
+  background: rgba(61, 255, 160, 0.15);
+}
+
+.cs-band[data-outcome='lost'] {
+  border-bottom-color: rgba(255, 90, 61, 0.35);
+  background: rgba(255, 90, 61, 0.12);
+}
+
+.cs-badge {
+  display: inline-block;
+  margin-bottom: var(--cs-md);
+  padding: 3px 12px;
+  border-radius: 999px;
+  background: var(--cs-gold);
+  color: var(--cs-bg);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+
+.cs-badge[hidden] {
+  display: none;
+}
+
+.cs-verdict {
+  margin: 0;
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--cs-good);
+}
+
+.cs-band[data-outcome='lost'] .cs-verdict {
+  color: var(--cs-danger);
+}
+
+.cs-sub {
+  margin: var(--cs-sm) 0 0;
+  font-size: 11px;
+  color: var(--cs-dim);
+}
+
+.cs-stats {
+  display: grid;
+  grid-template-columns: 1fr 1px 1fr;
+  align-items: center;
+  padding: var(--cs-xl) var(--cs-lg);
+  text-align: center;
+}
+
+/* Without a divider the two figures read as one wide number with a gap. */
+.cs-stats-rule {
+  align-self: stretch;
+  background: var(--cs-panel-edge);
+}
+
+.cs-stat-value {
+  display: block;
+  margin-top: var(--cs-sm);
+  font-size: 26px;
+  font-weight: 700;
+  /* Tabular figures: a score that changes must not shift the layout. */
+  font-variant-numeric: tabular-nums;
+  color: var(--cs-gold);
+}
+
+.cs-stat-value[data-zero='true'] {
+  color: var(--cs-faint);
+}
+
+.cs-note {
+  margin: 0 var(--cs-lg);
+  padding: var(--cs-md) var(--cs-lg);
+  border: 1px solid rgba(255, 198, 61, 0.35);
+  border-radius: var(--cs-r-md);
+  background: rgba(255, 198, 61, 0.06);
+  text-align: center;
+}
+
+.cs-status {
+  margin: var(--cs-md) var(--cs-lg) 0;
+  min-height: 1.2em;
+  font-size: 10px;
+  text-align: center;
+  color: var(--cs-cyan);
+}
+
+.cs-status[data-tone='good'] {
+  color: var(--cs-good);
+}
+.cs-status[data-tone='warn'] {
+  color: var(--cs-gold);
+}
+.cs-status[data-tone='bad'] {
+  color: var(--cs-danger);
+}
+
+/* --------------------------------------------------------- leaderboard -- */
+
+.cs-board-head {
+  padding: var(--cs-xl) var(--cs-lg) var(--cs-md);
+  text-align: center;
+  border-bottom: 1px solid var(--cs-panel-edge);
+}
+
+.cs-board-title {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}
+
+.cs-rows {
+  margin: 0;
+  padding: var(--cs-sm) var(--cs-md);
+  list-style: none;
+  /* Native momentum scrolling, for free — the canvas version was a hand-rolled
+     drag with a geometry mask. */
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.cs-row {
+  display: grid;
+  grid-template-columns: 2.5em 1fr auto;
+  gap: var(--cs-sm);
+  align-items: center;
+  padding: var(--cs-sm) var(--cs-md);
+  border-radius: var(--cs-r-sm);
+  font-size: 13px;
+}
+
+/* Your own row is lit the way the goal is lit — and carries a marker too, so
+   colour is never the only thing saying which row is yours. */
+.cs-row[data-you='true'] {
+  background: rgba(61, 255, 160, 0.1);
+  color: var(--cs-good);
+}
+
+.cs-rank {
+  font-size: 10px;
+  color: var(--cs-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.cs-row[data-you='true'] .cs-rank {
+  color: var(--cs-good);
+}
+
+.cs-who {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cs-score {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.cs-empty {
+  padding: var(--cs-h1) var(--cs-lg);
+  text-align: center;
+  font-size: 13px;
+  color: var(--cs-dim);
+}
+
+/* ------------------------------------------------------- reduced motion -- */
+
+@media (prefers-reduced-motion: reduce) {
+  .cs-flip,
+  .cs-btn {
+    transition-duration: 1ms;
+  }
+}

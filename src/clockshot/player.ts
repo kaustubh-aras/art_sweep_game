@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { GRAPPLE, HAZARD_IFRAMES_MS, MOVE, PLAYER_SIZE } from './tuning';
 import { TEX } from './textures';
+import { fitArt } from './art';
 import type { Anchor } from './arena';
 
 /** What the player is asking for this frame, from whichever input device. */
@@ -49,6 +50,9 @@ export class Player {
     y: number,
   ) {
     this.sprite = scene.physics.add.sprite(x, y, TEX.player);
+    // The illustrated player is source art, not a baked sprite: without this it
+    // arrives at its own resolution rather than the size of the character.
+    fitArt(this.sprite, TEX.player);
     this.body = this.sprite.body as Phaser.Physics.Arcade.Body;
 
     this.body.setSize(PLAYER_SIZE.w, PLAYER_SIZE.h);

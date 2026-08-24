@@ -21,6 +21,7 @@ export const TEX = {
   checkpointLit: 'cs-cp-lit',
   anchor: 'cs-anchor',
   spark: 'cs-spark',
+  glow: 'cs-glow',
 } as const;
 
 /** Draws into an offscreen canvas and registers it as a texture. */
@@ -177,6 +178,23 @@ export function bakeTextures(scene: Phaser.Scene): void {
     g.fillStyle(C.cyan, 1);
     g.fillCircle(17, 17, 3.5);
   });
+
+  // A soft radial, drawn once in WHITE and tinted by whatever needs to look
+  // hot — baking the colour in would mean a second texture the first time
+  // anything wanted a different one. Built from stacked circles rather than a
+  // gradient because `Graphics` has no gradient fill; at this size the banding
+  // disappears the moment it is blended.
+  if (!scene.textures.exists(TEX.glow)) {
+    const gr = scene.make.graphics({ x: 0, y: 0 }, false);
+    const R = 64;
+    for (let i = R; i > 0; i--) {
+      const t = i / R;
+      gr.fillStyle(0xffffff, 0.05 * (1 - t) ** 1.6);
+      gr.fillCircle(R, R, i);
+    }
+    gr.generateTexture(TEX.glow, R * 2, R * 2);
+    gr.destroy();
+  }
 
   bake(scene, TEX.spark, 14, 14, (g) => {
     g.fillStyle(0xffffff, 1);

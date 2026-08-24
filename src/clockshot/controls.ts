@@ -23,10 +23,17 @@ import type { Intent } from './player';
 /** Everything about the thumbstick, in design pixels. */
 const STICK = {
   /** The visible well the thumb rests in. */
-  base: 42,
-  /** How far the knob travels before it is at full lean. */
-  throw: 36,
-  knob: 19,
+  base: 58,
+  /**
+   * How far the knob travels before it is at full lean.
+   *
+   * This is the precision dial, not the size dial. Lean is reported as a
+   * fraction of this distance, so a longer throw spreads the same 0-to-1 range
+   * over more millimetres of thumb — every intermediate value gets easier to
+   * hold, which is what steering a swing actually asks for.
+   */
+  throw: 50,
+  knob: 26,
   /**
    * Lean below this fraction reads as centred.
    *

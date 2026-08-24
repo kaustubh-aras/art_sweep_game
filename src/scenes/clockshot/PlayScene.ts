@@ -10,8 +10,9 @@ import {
   type Rect,
 } from '@/clockshot/arena';
 import { C, FONT, T, hex } from '@/clockshot/theme';
-import { GRAVITY, WARNING_MS } from '@/clockshot/tuning';
+import { COMBAT, GRAVITY, WARNING_MS } from '@/clockshot/tuning';
 import { TEX, bakeTextures } from '@/clockshot/textures';
+import { ART, fitArt, hasArt } from '@/clockshot/art';
 import { Controls } from '@/clockshot/controls';
 import { TimerHud } from '@/clockshot/timerHud';
 import { Player } from '@/clockshot/player';
@@ -36,7 +37,11 @@ interface EnemyData {
   dir: 1 | -1;
 }
 
-type EnemySprite = Phaser.Physics.Arcade.Sprite & { cs: EnemyData };
+type EnemySprite = Phaser.Physics.Arcade.Sprite & {
+  cs: EnemyData;
+  /** The red heat behind the blade, kept in step with it. */
+  glow?: Phaser.GameObjects.Image;
+};
 type CheckpointSprite = Phaser.Physics.Arcade.Sprite & { index: number };
 
 /**
@@ -66,6 +71,24 @@ type PickupSprite = Phaser.Physics.Arcade.Sprite & { kind: PickupKind; taken: bo
  * back, the run is exactly as far along as it really is, and may already be
  * over.
  */
+/**
+ * Blade spin, in degrees per second.
+ *
+ * Borrowed from Trapmaker, which tuned 36 rad/s by play-testing and described
+ * it as "fast, menacing" — roughly 2060 degrees a second. Fast enough that the
+ * teeth blur into a threat rather than reading as a slowly turning wheel.
+ */
+const SAW_SPIN = 2060;
+
+/**
+ * How far a hazard's heat reaches, as a multiple of the thing throwing it.
+ *
+ * The glow is a warning, so it is deliberately much larger than its source —
+ * a halo that stops at the edge of a spike tells a player nothing they could
+ * not already see from the spike.
+ */
+const GLOW_SPREAD = 4;
+
 export class PlayScene extends Phaser.Scene {
   private run!: RunStartResponse;
   /** The place this window is played in. Chosen by the server, drawn here. */
@@ -90,6 +113,8 @@ export class PlayScene extends Phaser.Scene {
    */
   private timeMs = START_TIME_MS;
   private started = false;
+  /** The scale the anchor art is drawn at, so the highlight can build on it. */
+  private anchorScale = 1;
   /** Last anchor count painted, so the HUD only redraws when it changes. */
   private shownAnchors = -1;
   private goal!: Phaser.Physics.Arcade.Sprite;
@@ -226,11 +251,31 @@ export class PlayScene extends Phaser.Scene {
   /** Parallax grid, so speed is legible against an otherwise empty void. */
   private drawBackdrop(): void {
     const { width, height } = this.arena.world;
-    const g = this.add.graphics().setDepth(-10);
-    g.lineStyle(1, C.grid, 0.55);
-    for (let x = 0; x <= width; x += 120) g.lineBetween(x, 0, x, height);
-    for (let y = 0; y <= height; y += 120) g.lineBetween(0, y, width, y);
-    g.setScrollFactor(0.35);
+
+    if (hasArt(this, ART.backdrop)) {
+      // The painted arena, parallaxed. Held back to a fraction of full
+      // brightness: it is scenery, and a busy illustration at full strength
+      // competes with the pickups a player is trying to read at speed.
+      const sky = this.add
+        .image(0, 0, ART.backdrop)
+        .setOrigin(0, 0)
+        .setDepth(-10)
+        .setScrollFactor(0.35)
+        .setAlpha(0.55);
+
+      // Cover the parallaxed span rather than the world: at 0.35 the backdrop
+      // travels a third as far, so it only has to be a third wider.
+      const span = { w: width * 0.4 + this.scale.width, h: height * 0.4 + this.scale.height };
+      const scale = Math.max(span.w / sky.width, span.h / sky.height);
+      sky.setScale(scale);
+      this.world(sky);
+    } else {
+      const g = this.add.graphics().setDepth(-10);
+      g.lineStyle(1, C.grid, 0.55);
+      for (let x = 0; x <= width; x += 120) g.lineBetween(x, 0, x, height);
+      for (let y = 0; y <= height; y += 120) g.lineBetween(0, y, width, y);
+      g.setScrollFactor(0.35);
+    }
 
     // A horizon glow, just to give the void a floor to sit against.
     const glow = this.add.graphics().setDepth(-9).setScrollFactor(0.5);
@@ -240,7 +285,8 @@ export class PlayScene extends Phaser.Scene {
 
   private buildPlatforms(): void {
     this.platforms = this.physics.add.staticGroup();
-    const g = this.add.graphics().setDepth(4);
+    const g = this.add.graphics().setDepth(5);
+    const art = hasArt(this, ART.platform);
 
     for (const r of this.arena.platforms) {
       const c = centreOf(r);
@@ -248,9 +294,19 @@ export class PlayScene extends Phaser.Scene {
       this.physics.add.existing(body, true);
       this.platforms.add(body);
 
-      g.fillStyle(C.platform, 1);
-      g.fillRoundedRect(r.x, r.y, r.w, r.h, 5);
-      // A lit top edge tells the player where they can actually stand.
+      if (art) {
+        // Tiled rather than stretched: platforms are any width the arena wants,
+        // and one slab scaled to fit would show a different block size on every
+        // ledge.
+        this.world(this.layTiles(r, ART.platform, 4));
+      } else {
+        g.fillStyle(C.platform, 1);
+        g.fillRoundedRect(r.x, r.y, r.w, r.h, 5);
+      }
+
+      // A lit top edge tells the player where they can actually stand. Kept
+      // over the artwork too — it is the one part of a platform that has to
+      // read instantly, and the illustration has no such affordance of its own.
       g.fillStyle(C.platformTop, 1);
       g.fillRect(r.x + 3, r.y, r.w - 6, 4);
     }
@@ -259,14 +315,107 @@ export class PlayScene extends Phaser.Scene {
   private buildHazards(): void {
     this.hazards = this.physics.add.staticGroup();
     const g = this.add.graphics().setDepth(5);
+    const art = hasArt(this, ART.hazard);
 
     for (const r of this.arena.hazards) {
       const c = centreOf(r);
       const body = this.add.rectangle(c.x, c.y, r.w, r.h);
       this.physics.add.existing(body, true);
       this.hazards.add(body);
-      this.drawSpikes(g, r);
+      if (art) this.drawSpikeArt(r);
+      else this.drawSpikes(g, r);
     }
+  }
+
+  /**
+   * The painted hazard, repeated along the strip.
+   *
+   * The art is a spike on a plinth: a wide base that sits flat on the surface
+   * and a point that rises above it. So the tile is drawn taller than the
+   * collision box and hung from its bottom edge, which puts the base exactly on
+   * the strip and lets the tip overhang.
+   *
+   * The overhang is deliberate. What punishes a player is the strip; the point
+   * standing proud of it reads as "do not go near" without ever being the thing
+   * that actually hits them.
+   */
+  private drawSpikeArt(r: Rect): void {
+    const h = r.h * 2.2;
+    const rect = { x: r.x, y: r.y + r.h - h, w: r.w, h };
+
+    // The heat is PLACED, one halo per spike, rather than tiled with them.
+    // Tiling would bind each halo to its cell, so a glow wider than the spike
+    // it belongs to could not exist — and the whole point is that it spills.
+    const grid = this.tileGrid(rect);
+    const halos = this.add.container(0, 0).setDepth(5).setAlpha(0.3);
+    const size = Math.min(grid.tw, grid.th) * GLOW_SPREAD;
+
+    for (let i = 0; i < grid.cols; i++) {
+      const cx = rect.x + (i + 0.5) * grid.tw;
+      halos.add(
+        this.add
+          .image(cx, rect.y + rect.h - grid.th * 0.5, TEX.glow)
+          .setBlendMode(Phaser.BlendModes.ADD)
+          .setTint(C.rage)
+          .setDisplaySize(size, size),
+      );
+    }
+    this.world(halos);
+
+    // Slower than the saw's breath and offset by where the strip sits, so a
+    // wall of spikes throbs like a row of separate angry things rather than one
+    // machine. Tweening the container rather than each halo keeps a long strip
+    // to a single tween.
+    this.tweens.add({
+      targets: halos,
+      alpha: 0.6,
+      duration: 820 + ((r.x * 13) % 260),
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
+
+    this.world(this.layTiles(rect, ART.hazard, 6));
+  }
+
+  /**
+   * Fills a rectangle with WHOLE tiles.
+   *
+   * A `tileSprite` repeats its texture until it runs out of room, which means
+   * the last column is sliced wherever the rectangle is not an exact multiple
+   * of the tile — the "weird cut" at the end of every ledge. Instead the tile
+   * count is rounded to whole numbers first and the scale is then derived from
+   * it, so the tiles stretch by a percent or two rather than one of them being
+   * cut in half.
+   *
+   * Rounding is per axis and independent, so a rectangle whose aspect is not a
+   * clean multiple still gets whole tiles both ways, each as near square as the
+   * rectangle allows.
+   */
+  private layTiles(r: Rect, key: string, depth: number): Phaser.GameObjects.TileSprite {
+    const tex = this.textures.get(key).getSourceImage();
+    const size = Math.min(tex.width, tex.height);
+    const { cols, rows } = this.tileGrid(r);
+
+    return this.add
+      .tileSprite(r.x, r.y, r.w, r.h, key)
+      .setOrigin(0, 0)
+      .setDepth(depth)
+      .setTileScale(r.w / (cols * size), r.h / (rows * size));
+  }
+
+  /**
+   * How many whole tiles a rectangle takes, and how big each one lands.
+   *
+   * Shared so that anything decorating a tiled strip — the hazard glow, most
+   * obviously — can line up with the tiles exactly instead of deriving the same
+   * rounding a second time and drifting by a pixel.
+   */
+  private tileGrid(r: Rect): { cols: number; rows: number; tw: number; th: number } {
+    // Aim for tiles about as tall as the rectangle, then round to a whole count.
+    const cols = Math.max(1, Math.round(r.w / r.h));
+    const rows = Math.max(1, Math.round(r.h / (r.w / cols)));
+    return { cols, rows, tw: r.w / cols, th: r.h / rows };
   }
 
   private drawSpikes(g: Phaser.GameObjects.Graphics, r: Rect): void {
@@ -284,6 +433,7 @@ export class PlayScene extends Phaser.Scene {
   private buildAnchors(): void {
     for (const a of this.arena.anchors) {
       const img = this.add.image(a.x, a.y, TEX.anchor).setDepth(6);
+      this.anchorScale = fitArt(img, TEX.anchor);
       this.anchorSprites.push(img);
     }
   }
@@ -298,6 +448,7 @@ export class PlayScene extends Phaser.Scene {
 
     for (const p of list) {
       const s = this.pickups.create(p.x, p.y, texFor[p.kind]) as PickupSprite;
+      fitArt(s, texFor[p.kind]);
       s.kind = p.kind;
       s.taken = false;
       s.setDepth(10);
@@ -322,7 +473,32 @@ export class PlayScene extends Phaser.Scene {
     this.enemies = this.physics.add.group({ allowGravity: false });
     for (const p of patrols) {
       const e = this.enemies.create(p.x, p.y, TEX.enemy) as EnemySprite;
+      fitArt(e, TEX.enemy);
       e.setDepth(12);
+
+      // The heat the blade throws, behind it and additively blended so it reads
+      // as light rather than as a red disc laid over the art. Drawn rather than
+      // post-processed on purpose: Phaser's bloom is WebGL-only and vanishes
+      // without a word on a Canvas fallback, and a hazard that stops announcing
+      // itself on some devices is not a decoration, it is a bug.
+      const glow = this.add
+        .image(p.x, p.y, TEX.glow)
+        .setDepth(11)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setTint(C.rage)
+        .setDisplaySize(COMBAT.enemyRadius * 10, COMBAT.enemyRadius * 10)
+        .setAlpha(0.55);
+      e.glow = glow;
+
+      this.tweens.add({
+        targets: glow,
+        alpha: 0.82,
+        scale: glow.scale * 1.12,
+        duration: 620,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      });
       (e.body as Phaser.Physics.Arcade.Body).setAllowGravity(false);
       e.cs = { from: p.from, to: p.to, speed: p.speed, dir: 1 };
       e.setVelocityX(p.speed);
@@ -536,7 +712,7 @@ export class PlayScene extends Phaser.Scene {
 
     this.tweens.add({
       targets: s,
-      scale: 1.7,
+      scale: s.scaleX * 1.7,
       alpha: 0,
       duration: 180,
       onComplete: () => s.destroy(),
@@ -729,9 +905,12 @@ export class PlayScene extends Phaser.Scene {
         d.dir = -1;
         e.setVelocityX(-d.speed);
       }
-      e.setFlipX(d.dir < 0);
-      // A slow wobble so a patrol never looks like a sliding decal.
-      e.setAngle(e.angle + (delta / 1000) * 40 * d.dir);
+      // The blade spins on its own motor: fast, and the same way round however
+      // the saw happens to be travelling. Tying the spin to the direction of
+      // travel — which is what this did — made it stall and reverse at each end
+      // of the patrol, which reads as a wobble rather than as a running blade.
+      e.angle += (delta / 1000) * SAW_SPIN;
+      e.glow?.setPosition(e.x, e.y);
     }
   }
 
@@ -774,7 +953,7 @@ export class PlayScene extends Phaser.Scene {
       const img = this.anchorSprites[i]!;
       const a = this.arena.anchors[i]!;
       const isTarget = target !== null && a.x === target.x && a.y === target.y;
-      img.setScale(isTarget ? 1.35 : 1);
+      img.setScale(this.anchorScale * (isTarget ? 1.35 : 1));
       img.setAlpha(isTarget ? 1 : 0.55);
     }
     return target;

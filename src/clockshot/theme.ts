@@ -46,6 +46,17 @@ export const C = {
   danger: 0xff5a3d,
   good: 0x3dffa0,
 
+  /**
+   * The heat every hazard throws.
+   *
+   * Deeper and far more saturated than `danger`, which is an orange used for
+   * text and borders. Additive blending lifts and desaturates whatever it is
+   * given, so a glow mixed at the text red comes out pink and reads as pretty
+   * rather than as a warning. Starting deep is what keeps it angry once it is
+   * on screen.
+   */
+  rage: 0xd4102a,
+
   /** The goal. The one thing in the arena that ends the run. */
   goal: 0x3dffa0,
   goalDeep: 0x0b4a2c,

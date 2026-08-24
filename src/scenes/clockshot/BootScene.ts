@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { C, FONT } from '@/clockshot/theme';
 import { addBackdrop } from '@/clockshot/glass';
 import { bakeTextures } from '@/clockshot/textures';
+import { loadArt } from '@/clockshot/art';
 import { store } from '@/clockshot/store';
 import { whenChosen } from '@/clockshot/choice';
 import { api, NetError } from '@/clockshot/net';
@@ -24,6 +25,18 @@ export class BootScene extends Phaser.Scene {
 
   constructor() {
     super('cs-boot');
+  }
+
+  /**
+   * Queues the illustrated artwork.
+   *
+   * Boot is the only screen that can afford to wait on a network fetch — it is
+   * already a loading screen, and it is behind the splash card either way. Any
+   * image that fails simply never registers its key, and the generated sprite
+   * takes over.
+   */
+  preload(): void {
+    loadArt(this);
   }
 
   create(): void {

@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
-import { C, FONT, hex } from '@/clockshot/theme';
+import { C, hex } from '@/clockshot/theme';
 import { sfx } from '@/clockshot/sfx';
-import { fadeTo, fitText, layoutOf, type Layout } from '@/clockshot/ui';
+import { fadeTo, layoutOf, type Layout } from '@/clockshot/ui';
 import {
   BUDGET_TOTAL,
   CELL,
@@ -29,7 +29,7 @@ import {
 import { canPersist, isSaved, loadDraft, saveDraft, saveLevel } from '@/clockshot/buildStore';
 import { practiceRun, type PracticeResult } from '@/clockshot/practice';
 import { drawPieceIcon } from '@/clockshot/buildArt';
-import { attachTapProxy, type TapProxy, type TapTarget } from '@/clockshot/immersive';
+import { mountEditorChrome, type ChromeTool, type EditorChrome } from './editorChrome';
 
 interface Rect {
   x: number;
@@ -39,17 +39,7 @@ interface Rect {
 }
 
 /** Every tappable thing outside the canvas, hit-tested by hand. */
-interface Region extends Rect {
-  id: string;
-}
 
-interface Chip {
-  tool: Tool;
-  /** Rail-space rectangle; the live one is this offset by the rail scroll. */
-  base: Rect;
-  name: Phaser.GameObjects.Text;
-  sub: Phaser.GameObjects.Text;
-}
 
 interface EditorInit {
   /** A level to open. Without one the editor picks the draft back up. */
@@ -103,44 +93,24 @@ export class EditorScene extends Phaser.Scene {
   /* Geometry, all recomputed by relayout(). */
   private L!: Layout;
   private canvas: Rect = { x: 0, y: 0, w: 0, h: 0 };
-  private rail: Rect = { x: 0, y: 0, w: 0, h: 0 };
-  private railScroll = 0;
-  private railContentH = 0;
-  private regions: Region[] = [];
 
   private canvasGfx!: Phaser.GameObjects.Graphics;
-  private chromeGfx!: Phaser.GameObjects.Graphics;
-  private railGfx!: Phaser.GameObjects.Graphics;
-  private railText!: Phaser.GameObjects.Container;
   private canvasMask!: Phaser.GameObjects.Graphics;
-  private railMask!: Phaser.GameObjects.Graphics;
-
-  private chips: Chip[] = [];
-  private barLabels = new Map<string, Phaser.GameObjects.Text>();
-  private nameText!: Phaser.GameObjects.Text;
-  private budgetText!: Phaser.GameObjects.Text;
-  private statusText!: Phaser.GameObjects.Text;
-  private toastText!: Phaser.GameObjects.Text;
-  private toastTween?: Phaser.Tweens.Tween;
 
   /**
-   * TEST is the tap that asks for the screen.
+   * The toolbar, the tool rail and the dialogs, as DOM over the canvas.
    *
-   * A test run is a run, and a run wants the whole display — but the request
-   * only travels on a click the browser itself made, and this canvas never
-   * produces one. So TEST gets the same transparent DOM stand-in the menu's
-   * PLAY button has. Where the game already has the screen there is nothing to
-   * ask for and no proxy is made, and the canvas handles the tap as usual.
+   * TEST is a real button here, so the click that asks for the screen is the
+   * genuine one Reddit requires — the transparent stand-in this used to need is
+   * gone, and with it the re-sync on every relayout.
    */
-  private testProxy: TapProxy | null = null;
-  private testDown = false;
+  private chrome!: EditorChrome;
 
   /* Gesture state. */
   private pointers = new Map<number, { x: number; y: number }>();
-  private gesture: 'none' | 'pan' | 'paint' | 'pinch' | 'rail' = 'none';
-  private pressRegion: string | null = null;
+  private gesture: 'none' | 'pan' | 'paint' | 'pinch' = 'none';
   private moved = false;
-  private dragStart = { sx: 0, sy: 0, camX: 0, camY: 0, scroll: 0 };
+  private dragStart = { sx: 0, sy: 0, camX: 0, camY: 0 };
   private pinchStart = { dist: 1, zoom: 1, mx: 0, my: 0, camX: 0, camY: 0 };
   private strokeSnapshot: BuildLevel | null = null;
   private strokeChanged = false;
@@ -167,39 +137,23 @@ export class EditorScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor(C.bg);
 
     this.canvasMask = this.make.graphics({}, false);
-    this.railMask = this.make.graphics({}, false);
-
     this.canvasGfx = this.add.graphics().setDepth(2);
     this.canvasGfx.setMask(this.canvasMask.createGeometryMask());
 
-    this.railGfx = this.add.graphics().setDepth(6);
-    this.railGfx.setMask(this.railMask.createGeometryMask());
-    this.railText = this.add.container(0, 0).setDepth(7);
-    this.railText.setMask(this.railMask.createGeometryMask());
-
-    this.chromeGfx = this.add.graphics().setDepth(8);
-
-    this.buildChips();
-    this.buildBar();
-
-    this.toastText = this.add
-      .text(0, 0, '', { fontFamily: FONT, fontSize: '12px', color: hex(C.ink) })
-      .setOrigin(0.5)
-      .setDepth(30)
-      .setAlpha(0);
+    this.chrome = mountEditorChrome(this, {
+      onAction: (id) => this.onAction(id),
+      onTool: (tool) => this.selectTool(tool as Tool),
+      onRename: (name) => this.applyName(name),
+    });
 
     this.bindInput();
     this.relayout();
     this.fitView();
     this.refresh();
 
-    this.testProxy = attachTapProxy(this, this.testTarget());
-
     this.scale.on(Phaser.Scale.Events.RESIZE, this.relayout, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.scale.off(Phaser.Scale.Events.RESIZE, this.relayout, this);
-      this.testProxy?.destroy();
-      this.testProxy = null;
     });
 
     // Back from a test run: a clear is the one thing that makes a level
@@ -227,56 +181,10 @@ export class EditorScene extends Phaser.Scene {
     return [...PALETTE_ORDER, 'spawn', 'goal'];
   }
 
-  private buildChips(): void {
-    for (const tool of this.tools()) {
-      const name = this.add
-        .text(0, 0, this.toolLabel(tool), { fontFamily: FONT, fontSize: '11px', color: hex(C.ink) })
-        .setOrigin(0, 0.5);
-      const sub = this.add
-        .text(0, 0, '', { fontFamily: FONT, fontSize: '9px', color: hex(C.dim) })
-        .setOrigin(0, 0.5);
-      this.railText.add([name, sub]);
-      this.chips.push({ tool, base: { x: 0, y: 0, w: 0, h: 0 }, name, sub });
-    }
-  }
-
   private toolLabel(tool: Tool): string {
     if (tool === 'spawn') return 'SPAWN';
     if (tool === 'goal') return 'GOAL';
     return PIECES[tool].label;
-  }
-
-  private buildBar(): void {
-    const add = (id: string, caption: string, size = 13): void => {
-      const t = this.add
-        .text(0, 0, caption, { fontFamily: FONT, fontSize: `${size}px`, color: hex(C.ink) })
-        .setOrigin(0.5)
-        .setDepth(10);
-      this.barLabels.set(id, t);
-    };
-
-    add('back', '‹', 17);
-    add('levels', '≡', 15);
-    add('undo', '↶', 15);
-    add('redo', '↷', 15);
-    add('grid', '#', 13);
-    add('erase', 'ERASE', 10);
-    add('mode', 'PAN', 10);
-    add('test', 'TEST', 14);
-    add('save', 'SAVE', 14);
-
-    this.nameText = this.add
-      .text(0, 0, '', { fontFamily: FONT, fontSize: '13px', color: hex(C.gold) })
-      .setOrigin(0.5)
-      .setDepth(10);
-    this.budgetText = this.add
-      .text(0, 0, '', { fontFamily: FONT, fontSize: '9px', color: hex(C.dim) })
-      .setOrigin(1, 0.5)
-      .setDepth(10);
-    this.statusText = this.add
-      .text(0, 0, '', { fontFamily: FONT, fontSize: '9px', color: hex(C.dim) })
-      .setOrigin(0, 0.5)
-      .setDepth(10);
   }
 
   /* ---------------------------------------------------------------------- */
@@ -286,170 +194,27 @@ export class EditorScene extends Phaser.Scene {
   private relayout(): void {
     const L = layoutOf(this);
     this.L = L;
-    const u = L.ui;
 
-    const railW = Math.min(84 * u, L.iw * 0.26);
-    const barH = 74 * u;
-    const gap = 8 * u;
-
-    this.rail = { x: L.x, y: L.y, w: railW, h: L.ih };
-    const rightX = L.x + railW + gap;
-    const rightW = L.iw - railW - gap;
+    // The toolbar and the rail are DOM, and they know their own size — the grid
+    // takes whatever is left rather than both sides agreeing a number and then
+    // drifting apart the first time one of them wraps to a second line.
+    const inset = this.chrome.insets();
+    const gap = 8 * L.ui;
 
     this.canvas = {
-      x: rightX,
-      y: L.y + barH + gap,
-      w: rightW,
-      h: L.ih - barH - gap,
+      x: L.x + inset.left,
+      y: L.y + inset.top + gap,
+      w: Math.max(80, L.w - L.x - inset.left - 8 * L.ui),
+      h: Math.max(80, L.h - L.y - inset.top - gap - 8 * L.ui),
     };
 
     this.canvasMask.clear();
     this.canvasMask.fillStyle(0xffffff);
     this.canvasMask.fillRect(this.canvas.x, this.canvas.y, this.canvas.w, this.canvas.h);
-    this.railMask.clear();
-    this.railMask.fillStyle(0xffffff);
-    this.railMask.fillRect(this.rail.x, this.rail.y, this.rail.w, this.rail.h);
-
-    this.regions = [];
-    this.layoutRail();
-    this.layoutBar(rightX, L.y, rightW, barH);
 
     this.clampZoom();
     this.clampCam();
     this.refresh();
-
-    // A proxy that did not follow the re-layout would take taps where TEST no
-    // longer is — and going full screen is itself a re-layout.
-    this.testProxy?.sync();
-  }
-
-  private layoutRail(): void {
-    const u = this.L.ui;
-    const n = this.chips.length;
-    const gap = 5 * u;
-    const h = Phaser.Math.Clamp((this.rail.h - gap * (n - 1)) / n, 34 * u, 62 * u);
-
-    this.railContentH = h * n + gap * (n - 1);
-    this.railScroll = this.clampScroll(this.railScroll);
-
-    this.chips.forEach((chip, i) => {
-      chip.base = { x: this.rail.x, y: this.rail.y + i * (h + gap), w: this.rail.w, h };
-    });
-  }
-
-  private clampScroll(v: number): number {
-    const slack = Math.max(0, this.railContentH - this.rail.h);
-    return Phaser.Math.Clamp(v, -slack, 0);
-  }
-
-  private layoutBar(x: number, y: number, w: number, h: number): void {
-    const u = this.L.ui;
-    const pad = 8 * u;
-    const rowH = (h - pad * 3) / 2;
-    const row1 = y + pad + rowH / 2;
-    const row2 = y + pad * 2 + rowH + rowH / 2;
-
-    const icon = 30 * u;
-    const gap = 5 * u;
-
-    // Row one: leaving, the level's name, and taking a step back.
-    let cx = x + pad;
-    for (const id of ['back', 'levels']) {
-      this.addRegion(id, { x: cx, y: row1 - rowH / 2, w: icon, h: rowH });
-      cx += icon + gap;
-    }
-
-    let rx = x + w - pad;
-    for (const id of ['redo', 'undo']) {
-      rx -= icon;
-      this.addRegion(id, { x: rx, y: row1 - rowH / 2, w: icon, h: rowH });
-      rx -= gap;
-    }
-
-    const nameRect = { x: cx, y: row1 - rowH / 2, w: Math.max(40 * u, rx - cx), h: rowH };
-    this.addRegion('name', nameRect);
-    this.nameText.setPosition(nameRect.x + nameRect.w / 2, row1).setFontSize(Math.round(12 * u));
-
-    // Row two: the switches, then the budget that governs all of them.
-    cx = x + pad;
-    this.addRegion('grid', { x: cx, y: row2 - rowH / 2, w: icon, h: rowH });
-    cx += icon + gap;
-    const wide = 46 * u;
-    this.addRegion('erase', { x: cx, y: row2 - rowH / 2, w: wide, h: rowH });
-    cx += wide + gap;
-    this.addRegion('mode', { x: cx, y: row2 - rowH / 2, w: wide, h: rowH });
-    cx += wide + gap;
-
-    const meterW = Math.max(40 * u, x + w - pad - cx);
-    this.addRegion('budget', { x: cx, y: row2 - rowH / 2, w: meterW, h: rowH });
-    this.budgetText
-      .setPosition(cx + meterW - 6 * u, row2 - rowH / 2 + rowH * 0.28)
-      .setFontSize(Math.round(9 * u));
-    this.statusText
-      .setPosition(cx + 6 * u, row2 - rowH / 2 + rowH * 0.28)
-      .setFontSize(Math.round(9 * u));
-
-    for (const [id, t] of this.barLabels) {
-      const r = this.regions.find((q) => q.id === id);
-      if (r) t.setPosition(r.x + r.w / 2, r.y + r.h / 2);
-    }
-    this.barLabels.get('back')?.setFontSize(Math.round(17 * u));
-    this.barLabels.get('levels')?.setFontSize(Math.round(15 * u));
-    this.barLabels.get('undo')?.setFontSize(Math.round(15 * u));
-    this.barLabels.get('redo')?.setFontSize(Math.round(15 * u));
-    this.barLabels.get('grid')?.setFontSize(Math.round(13 * u));
-    this.barLabels.get('erase')?.setFontSize(Math.round(9.5 * u));
-    this.barLabels.get('mode')?.setFontSize(Math.round(9.5 * u));
-
-    // The two verbs, floating over the corner of the grid a thumb rests on.
-    const bw = Math.min(96 * u, (this.canvas.w - pad * 3) / 2);
-    const bh = 44 * u;
-    const by = this.canvas.y + this.canvas.h - bh - pad;
-    const bx = this.canvas.x + this.canvas.w - pad - bw;
-    this.addRegion('test', { x: bx, y: by, w: bw, h: bh });
-    this.addRegion('save', { x: bx - bw - pad, y: by, w: bw, h: bh });
-    for (const id of ['test', 'save']) {
-      const r = this.regions.find((q) => q.id === id)!;
-      this.barLabels.get(id)?.setPosition(r.x + r.w / 2, r.y + r.h / 2).setFontSize(Math.round(14 * u));
-    }
-
-    this.toastText
-      .setPosition(this.canvas.x + this.canvas.w / 2, this.canvas.y + 20 * u)
-      .setFontSize(Math.round(11 * u))
-      .setAlign('center')
-      .setWordWrapWidth(this.canvas.w - 24 * u);
-  }
-
-  private addRegion(id: string, r: Rect): void {
-    this.regions.push({ id, ...r });
-  }
-
-  /**
-   * The TEST button, described the way a tap proxy needs it.
-   *
-   * The editor's controls are rectangles in a `Graphics`, not `Button`s, so
-   * there is no object to hand over — this is one, backed by the same region
-   * the canvas draws and hit-tests.
-   */
-  private testTarget(): TapTarget {
-    const scene = this;
-    return {
-      bounds: () => scene.region('test') ?? { x: 0, y: 0, w: 0, h: 0 },
-      get isEnabled(): boolean {
-        return true;
-      },
-      get isVisible(): boolean {
-        return true;
-      },
-      get caption(): string {
-        return 'TEST';
-      },
-      setPressed: (on: boolean) => {
-        scene.testDown = on;
-        scene.drawChrome();
-      },
-      click: () => scene.onTest(),
-    };
   }
 
   /* ---------------------------------------------------------------------- */
@@ -457,126 +222,57 @@ export class EditorScene extends Phaser.Scene {
   /* ---------------------------------------------------------------------- */
 
   private refresh(): void {
-    this.drawChrome();
-    this.drawRail();
+    this.chrome.update({
+      name: this.level.name,
+      tools: this.chromeTools(),
+      tool: this.erase ? null : this.tool,
+      canUndo: this.undoStack.length > 0,
+      canRedo: this.redoStack.length > 0,
+      showGrid: this.showGrid,
+      erase: this.erase,
+      paintMode: this.paintMode,
+      used: budgetOf(this.level),
+      total: BUDGET_TOTAL,
+      verified: this.level.verifiedMs !== null,
+      onShelf: this.onShelf,
+    });
     this.drawCanvas();
   }
 
-  private drawChrome(): void {
-    const g = this.chromeGfx;
-    const u = this.L.ui;
-    g.clear();
-
-    const bar = this.barRect();
-    this.panel(g, bar, 14 * u, C.panel, 0.95, C.panelEdge);
-
-    for (const id of ['back', 'levels', 'undo', 'redo', 'grid']) {
-      const r = this.region(id);
-      if (r) this.chipBox(g, r, false, C.panelEdge);
-    }
-
-    const undoOn = this.undoStack.length > 0;
-    const redoOn = this.redoStack.length > 0;
-    this.barLabels.get('undo')?.setAlpha(undoOn ? 1 : 0.3);
-    this.barLabels.get('redo')?.setAlpha(redoOn ? 1 : 0.3);
-
-    const gridR = this.region('grid');
-    if (gridR && this.showGrid) this.chipBox(g, gridR, true, C.cyan);
-
-    const eraseR = this.region('erase');
-    if (eraseR) this.chipBox(g, eraseR, this.erase, this.erase ? C.danger : C.panelEdge);
-    this.barLabels.get('erase')?.setColor(hex(this.erase ? C.danger : C.dim));
-
-    const modeR = this.region('mode');
-    if (modeR) this.chipBox(g, modeR, this.paintMode, this.paintMode ? C.cyan : C.panelEdge);
-    this.barLabels.get('mode')?.setText(this.paintMode ? 'PAINT' : 'PAN');
-    this.barLabels.get('mode')?.setColor(hex(this.paintMode ? C.cyan : C.dim));
-
-    // The budget meter. Cyan while there is room, gold when it is tight, red
-    // at the ceiling — a builder should feel the wall before they hit it.
-    const meter = this.region('budget');
-    if (meter) {
-      const used = budgetOf(this.level);
-      const frac = Phaser.Math.Clamp(used / BUDGET_TOTAL, 0, 1);
-      const colour = frac >= 1 ? C.danger : frac > 0.8 ? C.gold : C.cyan;
-      const trackY = meter.y + meter.h * 0.62;
-      const trackH = 6 * u;
-      g.fillStyle(C.grid, 1);
-      g.fillRoundedRect(meter.x, trackY, meter.w, trackH, trackH / 2);
-      if (frac > 0) {
-        g.fillStyle(colour, 0.95);
-        g.fillRoundedRect(meter.x, trackY, Math.max(trackH, meter.w * frac), trackH, trackH / 2);
-      }
-      this.budgetText.setText(`${used}/${BUDGET_TOTAL}`).setColor(hex(colour));
-      this.statusText.setText('pieces');
-    }
-
-    this.nameText.setText(this.level.name.toUpperCase());
-    const nameR = this.region('name');
-    if (nameR) fitText(this.nameText, 12 * u, nameR.w - 8 * u);
-
-    // The two verbs. SAVE only lights up once the level has actually been
-    // cleared, because an unfinished level is not a level yet.
-    const testR = this.region('test');
-    if (testR) this.actionBox(g, testR, C.good, true, this.testDown);
-    const saveR = this.region('save');
-    if (saveR) {
-      const ready = this.level.verifiedMs !== null;
-      this.actionBox(g, saveR, C.gold, ready);
-      this.barLabels
-        .get('save')
-        ?.setText(this.onShelf && ready ? 'SAVED' : 'SAVE')
-        .setAlpha(ready ? 1 : 0.45);
-    }
-  }
-
-  private drawRail(): void {
-    const g = this.railGfx;
-    const u = this.L.ui;
-    g.clear();
-
+  /**
+   * The palette, described for the chrome.
+   *
+   * A chip is disabled for one of two different reasons — the piece is at its
+   * own cap, or one more would break the budget — and the line under the label
+   * says which. A dead control with no reason given is the most annoying kind.
+   */
+  private chromeTools(): ChromeTool[] {
     const used = budgetOf(this.level);
 
-    for (const chip of this.chips) {
-      const r = { ...chip.base, y: chip.base.y + this.railScroll };
-      const tool = chip.tool;
-      const piece = tool === 'spawn' || tool === 'goal' ? null : PIECES[tool as PieceKind];
+    return this.tools().map((tool) => {
+      if (tool === 'spawn' || tool === 'goal') {
+        return {
+          id: tool,
+          label: this.toolLabel(tool),
+          sub: tool === 'spawn' ? 'start' : 'finish',
+          colour: hex(tool === 'spawn' ? C.cyan : C.goal),
+          disabled: false,
+        };
+      }
 
-      const count = piece ? countKind(this.level, tool as PieceKind) : 1;
-      const capped = piece?.cap != null && count >= piece.cap;
-      const broke = piece != null && used + piece.cost > BUDGET_TOTAL;
-      const disabled = !!piece && (capped || broke);
-      const selected = this.tool === tool && !this.erase;
-      const accent = piece?.color ?? (tool === 'spawn' ? C.cyan : C.goal);
+      const piece = PIECES[tool as PieceKind];
+      const count = countKind(this.level, tool as PieceKind);
+      const capped = piece.cap != null && count >= piece.cap;
+      const broke = used + piece.cost > BUDGET_TOTAL;
 
-      g.fillStyle(selected ? accent : C.panel, selected ? 0.16 : 0.92);
-      g.fillRoundedRect(r.x, r.y, r.w, r.h, 10 * u);
-      g.lineStyle(selected ? 2 : 1.2, selected ? accent : C.panelEdge, selected ? 1 : 0.55);
-      g.strokeRoundedRect(r.x, r.y, r.w, r.h, 10 * u);
-
-      const iconR = Math.min(r.h * 0.3, 13 * u);
-      drawPieceIcon(g, tool, r.x + r.w - iconR - 9 * u, r.y + r.h / 2, iconR);
-
-      chip.name
-        .setPosition(r.x + 9 * u, r.y + r.h * 0.36)
-        .setFontSize(Math.round(10.5 * u))
-        .setColor(hex(disabled ? C.faint : selected ? C.ink : C.dim))
-        .setAlpha(disabled ? 0.55 : 1);
-
-      const sub = piece
-        ? capped
-          ? `max ${piece.cap}`
-          : `${count}  ·  ${piece.cost}`
-        : tool === 'spawn'
-          ? 'start'
-          : 'finish';
-      chip.sub
-        .setPosition(r.x + 9 * u, r.y + r.h * 0.68)
-        .setFontSize(Math.round(9 * u))
-        .setText(sub)
-        .setColor(hex(disabled ? C.faint : selected ? accent : C.faint))
-        .setAlpha(disabled ? 0.55 : 1);
-    }
+      return {
+        id: tool,
+        label: piece.label,
+        sub: capped ? `max ${piece.cap}` : broke ? 'no budget' : `${count}  ·  ${piece.cost}`,
+        colour: hex(piece.color),
+        disabled: capped || broke,
+      };
+    });
   }
 
   private drawCanvas(): void {
@@ -675,59 +371,6 @@ export class EditorScene extends Phaser.Scene {
   /** Top-left of the world, in screen units. */
   private originOf(): { x: number; y: number } {
     return { x: this.canvas.x - this.camX * this.zoom, y: this.canvas.y - this.camY * this.zoom };
-  }
-
-  private panel(
-    g: Phaser.GameObjects.Graphics,
-    r: Rect,
-    radius: number,
-    fill: number,
-    alpha: number,
-    edge: number,
-  ): void {
-    g.fillStyle(fill, alpha);
-    g.fillRoundedRect(r.x, r.y, r.w, r.h, radius);
-    g.lineStyle(1.2, edge, 0.55);
-    g.strokeRoundedRect(r.x, r.y, r.w, r.h, radius);
-  }
-
-  private chipBox(g: Phaser.GameObjects.Graphics, r: Rect, on: boolean, accent: number): void {
-    const rad = 8 * this.L.ui;
-    g.fillStyle(on ? accent : C.grid, on ? 0.18 : 0.9);
-    g.fillRoundedRect(r.x, r.y, r.w, r.h, rad);
-    g.lineStyle(on ? 1.8 : 1.2, accent, on ? 1 : 0.5);
-    g.strokeRoundedRect(r.x, r.y, r.w, r.h, rad);
-  }
-
-  private actionBox(
-    g: Phaser.GameObjects.Graphics,
-    r: Rect,
-    accent: number,
-    on: boolean,
-    pressed = false,
-  ): void {
-    const rad = 12 * this.L.ui;
-    g.fillStyle(accent, (on ? 0.24 : 0.08) + (pressed ? 0.2 : 0));
-    g.fillRoundedRect(r.x, r.y, r.w, r.h, rad);
-    g.lineStyle(2, accent, on ? 0.95 : 0.35);
-    g.strokeRoundedRect(r.x, r.y, r.w, r.h, rad);
-  }
-
-  private barRect(): Rect {
-    const r = this.region('back');
-    const budget = this.region('budget');
-    if (!r || !budget) return { x: 0, y: 0, w: 0, h: 0 };
-    const pad = 8 * this.L.ui;
-    return {
-      x: r.x - pad,
-      y: this.L.y,
-      w: budget.x + budget.w + pad - (r.x - pad),
-      h: this.canvas.y - this.L.y - 8 * this.L.ui,
-    };
-  }
-
-  private region(id: string): Region | undefined {
-    return this.regions.find((r) => r.id === id);
   }
 
   /* ---------------------------------------------------------------------- */
@@ -837,18 +480,10 @@ export class EditorScene extends Phaser.Scene {
     }
     if (this.pointers.size > 1) return;
 
-    const hit = this.regionAt(p.x, p.y);
-    if (hit) {
-      this.pressRegion = hit;
-      this.dragStart = { sx: p.x, sy: p.y, camX: this.camX, camY: this.camY, scroll: this.railScroll };
-      this.moved = false;
-      return;
-    }
-
     if (!this.inCanvas(p.x, p.y)) return;
 
     this.moved = false;
-    this.dragStart = { sx: p.x, sy: p.y, camX: this.camX, camY: this.camY, scroll: this.railScroll };
+    this.dragStart = { sx: p.x, sy: p.y, camX: this.camX, camY: this.camY };
 
     if (this.paintMode) {
       this.gesture = 'paint';
@@ -874,23 +509,6 @@ export class EditorScene extends Phaser.Scene {
     const dy = p.y - this.dragStart.sy;
     if (Math.hypot(dx, dy) > 6 * this.L.ui) this.moved = true;
 
-    if (this.pressRegion) {
-      // A press that began on a palette chip and then travelled is a scroll of
-      // the rail, not a selection: the rail is taller than the space it has.
-      if (this.pressRegion.startsWith('chip:') && this.moved) {
-        this.gesture = 'rail';
-        this.pressRegion = null;
-      } else {
-        return;
-      }
-    }
-
-    if (this.gesture === 'rail') {
-      this.railScroll = this.clampScroll(this.dragStart.scroll + dy);
-      this.drawRail();
-      return;
-    }
-
     if (this.gesture === 'pan') {
       this.camX = this.dragStart.camX - dx / this.zoom;
       this.camY = this.dragStart.camY - dy / this.zoom;
@@ -905,12 +523,7 @@ export class EditorScene extends Phaser.Scene {
   private onUp(p: Phaser.Input.Pointer): void {
     this.pointers.delete(p.id);
 
-    if (this.pressRegion) {
-      const hit = this.regionAt(p.x, p.y);
-      const id = this.pressRegion;
-      this.pressRegion = null;
-      if (hit === id) this.onRegion(id);
-    } else if (this.gesture === 'paint') {
+    if (this.gesture === 'paint') {
       this.endStroke();
     } else if (this.gesture === 'pan' && !this.moved) {
       this.onCanvasTap(p.x, p.y);
@@ -928,7 +541,6 @@ export class EditorScene extends Phaser.Scene {
         sy: rest.y,
         camX: this.camX,
         camY: this.camY,
-        scroll: this.railScroll,
       };
     }
   }
@@ -983,26 +595,15 @@ export class EditorScene extends Phaser.Scene {
     this.drawCanvas();
   }
 
-  private regionAt(x: number, y: number): string | null {
-    for (const r of this.regions) {
-      if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return r.id;
-    }
-    // Chips are hit-tested last and by hand, because the rail scrolls under
-    // them and their live rectangle is not the one they were laid out at.
-    if (x >= this.rail.x && x <= this.rail.x + this.rail.w) {
-      for (const chip of this.chips) {
-        const top = chip.base.y + this.railScroll;
-        if (y >= top && y <= top + chip.base.h && y >= this.rail.y && y <= this.rail.y + this.rail.h) {
-          return `chip:${chip.tool}`;
-        }
-      }
-    }
-    return null;
-  }
-
-  private onRegion(id: string): void {
-    if (id.startsWith('chip:')) return this.selectTool(id.slice(5) as Tool);
-
+  /**
+   * One control on the toolbar, pressed.
+   *
+   * The chrome owns what the buttons look like and when they are disabled; this
+   * only says what each one means. Keeping the verbs here rather than in the
+   * DOM module is what lets the toolbar be replaced again without touching a
+   * line of editing logic.
+   */
+  private onAction(id: string): void {
     switch (id) {
       case 'back':
         return this.leave('cs-menu');
@@ -1023,8 +624,6 @@ export class EditorScene extends Phaser.Scene {
         this.paintMode = !this.paintMode;
         this.toast(this.paintMode ? 'Drag to paint' : 'Drag to move the view');
         return this.refresh();
-      case 'name':
-        return this.rename();
       case 'test':
         return this.onTest();
       case 'save':
@@ -1235,20 +834,20 @@ export class EditorScene extends Phaser.Scene {
    * fortnight of work for a field nobody edits twice, and a web view that
    * blocks prompts simply says so rather than half-opening something.
    */
-  private rename(): void {
-    let answer: string | null = null;
-    try {
-      answer = window.prompt('Name this level', this.level.name);
-    } catch {
-      answer = null;
-    }
-    if (answer === null) {
-      this.toast('Renaming is not available here');
-      return;
-    }
-    const name = answer.trim().slice(0, 24);
-    if (!name) return;
-    this.mutate(() => (this.level.name = name));
+  /**
+   * Renames the level.
+   *
+   * This used to call `window.prompt`, which a Reddit web view blocks outright
+   * — so inside the post, where nearly everyone builds, renaming a level was
+   * simply impossible and the editor said so in a toast. The chrome asks with a
+   * real `<dialog>` and hands the answer here.
+   */
+  private applyName(name: string): void {
+    if (!name || name === this.level.name) return;
+    this.level.name = name;
+    saveDraft(this.level);
+    sfx.uiSelect();
+    this.refresh();
   }
 
   /* ---------------------------------------------------------------------- */
@@ -1306,14 +905,7 @@ export class EditorScene extends Phaser.Scene {
   /* ---------------------------------------------------------------------- */
 
   private toast(message: string, ms = 1500): void {
-    this.toastTween?.remove();
-    this.toastText.setText(message).setAlpha(1);
-    this.toastTween = this.tweens.add({
-      targets: this.toastText,
-      alpha: 0,
-      delay: ms,
-      duration: 320,
-    });
+    this.chrome.toast(message, ms);
   }
 
   /** A tick a thumb can feel, where the device offers one. */
