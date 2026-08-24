@@ -22,7 +22,7 @@
     "items": [
       {
         "label": "Create a Clockshot post",
-        "description": "Post a Clockshot time trial — swing to the goal before the clock runs out.",
+        "description": "Post a Clockshot time trial. Everyone who opens it races the same course: ten seconds, one grappling hook, grab clocks to stay alive.",
         "location": "subreddit",
         "forUserType": "moderator",
         "endpoint": "/internal/menu/create-post"

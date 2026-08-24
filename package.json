@@ -1,7 +1,7 @@
 {
   "name": "clockshot-game",
   "version": "0.0.0",
-  "description": "Clockshot — a Reddit community time war. Swing, shoot, and bank seconds for your team.",
+  "description": "Clockshot — a grappling time trial for Reddit. Ten seconds, one rope, reach the goal before the clock runs out.",
   "type": "module",
   "scripts": {
     "dev": "vite",
