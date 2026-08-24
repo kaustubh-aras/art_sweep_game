@@ -30,7 +30,7 @@ export class BootScene extends Phaser.Scene {
     this.dial = this.add.graphics();
     this.title = text(this, 0, 0, 'CLOCKSHOT', 34, C.gold);
     this.title.setStyle({ fontFamily: FONT, fontStyle: 'bold' });
-    this.tagline = text(this, 0, 0, 'community time war', 13, C.dim);
+    this.tagline = text(this, 0, 0, 'a grappling time trial', 13, C.dim);
     this.status = text(this, 0, 0, 'syncing the clock…', 12, C.faint);
 
     this.relayout();
