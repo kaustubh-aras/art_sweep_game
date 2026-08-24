@@ -12,6 +12,8 @@ import { Button, layoutOf, text } from '@/clockshot/ui';
  */
 export class PauseScene extends Phaser.Scene {
   private from = 'cs-play';
+  private quitTo = 'cs-menu';
+  private quitCaption = 'ABANDON RUN';
   private soundBtn!: Button;
   private resumeBtn!: Button;
   private quitBtn!: Button;
@@ -23,8 +25,12 @@ export class PauseScene extends Phaser.Scene {
     super('cs-pause');
   }
 
-  init(data: { from?: string }): void {
+  init(data: { from?: string; quitTo?: string; quitCaption?: string }): void {
     this.from = data.from ?? 'cs-play';
+    // Where quitting goes, and what it is called. A test run leaves to the
+    // editor and is ended rather than abandoned.
+    this.quitTo = data.quitTo ?? 'cs-menu';
+    this.quitCaption = data.quitCaption ?? 'ABANDON RUN';
   }
 
   create(): void {
@@ -42,12 +48,12 @@ export class PauseScene extends Phaser.Scene {
       sfx.toggleMute();
       this.soundBtn.setCaption(this.soundCaption());
     });
-    this.quitBtn = new Button(this, 0, 0, 'ABANDON RUN', { width: 240, color: C.danger }, () => {
+    this.quitBtn = new Button(this, 0, 0, this.quitCaption, { width: 240, color: C.danger }, () => {
       // Abandoning simply stops playing; the run is never submitted, so it
       // expires on the server and costs the team nothing.
       this.scene.stop(this.from);
       this.scene.stop();
-      this.scene.start('cs-menu');
+      this.scene.start(this.quitTo);
     });
 
     const kb = this.input.keyboard;

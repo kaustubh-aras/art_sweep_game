@@ -605,9 +605,11 @@ export function buildLayout(arena: Arena, seed: number): ArenaLayout {
     if (rand() < 0.75) pickups.push({ ...slot, kind: 'clock' });
   }
 
-  // One golden clock per run, always worth the detour.
-  const golden = arena.golden[Math.floor(rand() * arena.golden.length)] ?? arena.golden[0]!;
-  pickups.push({ ...golden, kind: 'golden' });
+  // One golden clock per run, always worth the detour. A player-built arena
+  // may have chosen not to have one at all, which is a level with no detour
+  // rather than a level that fails to load.
+  const golden = arena.golden[Math.floor(rand() * arena.golden.length)] ?? arena.golden[0];
+  if (golden) pickups.push({ ...golden, kind: 'golden' });
 
   const patrols = arena.patrols.filter(() => rand() < 0.88).map((p) => ({ ...p }));
 

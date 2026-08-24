@@ -28,12 +28,21 @@ export class MenuScene extends Phaser.Scene {
   private feedLabel!: Phaser.GameObjects.Text;
 
   private playBtn!: Button;
+  private buildBtn!: Button;
   private howBtn!: Button;
   private boardBtn!: Button;
   private soundBtn!: Button;
 
   /** Present wherever full screen can be had; PLAY is the tap that asks. */
   private playProxy: TapProxy | null = null;
+  /**
+   * The same, for the builder.
+   *
+   * Building wants the screen at least as much as playing does — it is a grid
+   * and a palette on a phone — and this is the only tap on the way in that the
+   * DOM ever sees.
+   */
+  private buildProxy: TapProxy | null = null;
 
   private unsubscribe: (() => void) | null = null;
   private poll!: Phaser.Time.TimerEvent;
@@ -70,6 +79,11 @@ export class MenuScene extends Phaser.Scene {
     this.playBtn = new Button(this, 0, 0, 'PLAY', { width: 240, filled: true, color: C.gold }, () =>
       this.onPlay(),
     );
+    // Building needs no server and no login: it is the one thing here a player
+    // can do while the board is between windows or their connection is out.
+    this.buildBtn = new Button(this, 0, 0, 'BUILD A LEVEL', { width: 240, color: C.good }, () =>
+      fadeTo(this, () => this.scene.start('cs-levels')),
+    );
     this.howBtn = new Button(this, 0, 0, 'HOW TO PLAY', { width: 240, color: C.cyan }, () =>
       fadeTo(this, () => this.scene.start('cs-howto')),
     );
@@ -97,6 +111,7 @@ export class MenuScene extends Phaser.Scene {
     // The one tap a player is guaranteed to make before a run is PLAY, so that
     // is the tap that carries the request to take over the screen.
     this.playProxy = attachTapProxy(this, this.playBtn);
+    this.buildProxy = attachTapProxy(this, this.buildBtn);
 
     // Keep the board live while the player sits on the menu.
     this.poll = this.time.addEvent({
@@ -109,6 +124,7 @@ export class MenuScene extends Phaser.Scene {
       this.unsubscribe?.();
       this.poll.remove();
       this.playProxy?.destroy();
+      this.buildProxy?.destroy();
       this.scale.off(Phaser.Scale.Events.RESIZE, this.relayout, this);
     });
 
@@ -225,7 +241,7 @@ export class MenuScene extends Phaser.Scene {
 
     // The feed fills the space between the title block and the buttons.
     const feedTop = titleY + 76 * L.ui;
-    const feedBottom = L.y + L.ih - (52 * L.ui + 10 * L.ui) * 4 - 16 * L.ui;
+    const feedBottom = L.y + L.ih - (52 * L.ui + 10 * L.ui) * 5 - 16 * L.ui;
     const feedH = Math.max(0, feedBottom - feedTop);
     const showFeed = feedH > 76 * L.ui;
 
@@ -256,15 +272,18 @@ export class MenuScene extends Phaser.Scene {
     by -= bh + gap;
     this.howBtn.setPosition(L.cx, by);
     by -= bh + gap;
+    this.buildBtn.setPosition(L.cx, by);
+    by -= bh + gap;
     this.playBtn.setPosition(L.cx, by);
 
-    for (const b of [this.playBtn, this.howBtn, this.boardBtn, this.soundBtn]) {
+    for (const b of [this.playBtn, this.buildBtn, this.howBtn, this.boardBtn, this.soundBtn]) {
       b.setSize(bw, bh).setFontSize(16 * L.ui);
     }
 
     // A proxy that did not follow the re-layout would take taps where the
     // button no longer is.
     this.playProxy?.sync();
+    this.buildProxy?.sync();
   }
 
   update(): void {

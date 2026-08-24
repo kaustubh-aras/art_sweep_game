@@ -1,7 +1,6 @@
 import type Phaser from 'phaser';
 import { getWebViewMode, requestExpandedMode } from '@devvit/web/client';
 import { dpr } from '../ui/viewport';
-import type { Button } from './ui';
 
 /**
  * Full-screen play, on every device the game runs on.
@@ -178,13 +177,33 @@ function settleViewport(): void {
  */
 const SWALLOWED = ['mousedown', 'mouseup', 'touchstart', 'touchend', 'touchcancel'] as const;
 
-/** A transparent DOM button that stands in for a canvas button. */
+/**
+ * What a proxy needs from the thing it stands in for.
+ *
+ * `Button` satisfies this as it is, and so does anything else that can report
+ * where it is on screen and be pressed — which is what lets the level editor,
+ * whose controls are hand-drawn rectangles rather than `Button`s, take the
+ * screen by exactly the same route the menu does.
+ */
+export interface TapTarget {
+  /** The target's rectangle in game units. */
+  bounds(): { x: number; y: number; w: number; h: number };
+  readonly isEnabled: boolean;
+  readonly isVisible: boolean;
+  readonly caption: string;
+  /** Drives the target's own pressed look, so a press still reads as one. */
+  setPressed(on: boolean): unknown;
+  /** Fires the target's action, exactly as a tap on it would. */
+  click(): unknown;
+}
+
+/** A transparent DOM button that stands in for a canvas control. */
 export class TapProxy {
   private readonly el: HTMLButtonElement;
 
   constructor(
     parent: HTMLElement,
-    private readonly button: Button,
+    private readonly button: TapTarget,
   ) {
     const el = document.createElement('button');
     el.type = 'button';
@@ -236,7 +255,12 @@ export class TapProxy {
 }
 
 /**
- * Lays a tap proxy over a button, for the buttons that start a run.
+ * Lays a tap proxy over a control, for the taps that open something.
+ *
+ * Every screen that leads somewhere the player wants the whole display for —
+ * starting a run, opening the builder, testing a level they just built — hangs
+ * one of these on the control that leads there, because the trusted click that
+ * asks for the screen can only be had from the DOM.
  *
  * Returns `null` — and changes nothing — when the game already has the whole
  * screen and the canvas can simply be tapped, or when this device offers no way
@@ -244,7 +268,7 @@ export class TapProxy {
  * The caller owns what it gets back: `sync()` it whenever the screen is laid
  * out, and `destroy()` it when the screen goes away.
  */
-export function attachTapProxy(scene: Phaser.Scene, button: Button): TapProxy | null {
+export function attachTapProxy(scene: Phaser.Scene, button: TapTarget): TapProxy | null {
   if (isFullScreen()) return null;
   if (!inWebView() && !canBrowserFullScreen()) return null;
 

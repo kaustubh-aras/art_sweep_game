@@ -115,10 +115,56 @@ The grapple auto-targets: the anchor it would take is always highlighted, so
 aiming is never a guess. The rope shortens while held, so a swing gains height
 instead of decaying.
 
+## Build your own arena
+
+`BUILD A LEVEL` on the menu opens the shelf, and `NEW LEVEL` opens the editor on
+a starter arena that already works: a floor, a gap, a rank of anchors and a
+goal on the far side. Press `TEST` and it plays.
+
+The grid is 30 × 25 cells of 60 world units — the same 1800 × 1500 as The
+Gantry. A level is a coarse grid of cells with one piece to a cell, and
+`toArena` in `src/clockshot/build.ts` turns it into exactly the same `Arena`
+the three shipped levels are. That is the point: a built level is played by the
+code that plays the real ones, so it can never behave differently from a
+designed one. Runs of blocks are merged into single platforms on the way
+through, because abutting arcade bodies catch a running player on their seams.
+
+| Piece | Cost | Limit | What it does |
+|---|---|---|---|
+| Block | 1 | — | solid ground |
+| Anchor | 3 | 26 | somewhere to hook |
+| Clock | 2 | 40 | +2s |
+| Golden | 8 | 1 | +5s |
+| Check | 5 | 4 | restart point |
+| Spike | 1 | 40 | −2s |
+| Enemy | 4 | 10 | −2s, patrols its own ledge |
+
+A level may spend **160** in total, which is roughly what one of the shipped
+arenas costs. Spawn and goal are free, mandatory, and can be moved but not
+removed.
+
+**Editing** — tap an empty cell to place the selected piece, tap an occupied one
+to take it away. Drag pans the view and pinch zooms it; `PAINT` switches drag to
+laying cells instead, which is how a floor gets built. `ERASE` makes every tap
+remove. Undo and redo go back forty steps.
+
+**TEST and SAVE** — a level reaches the shelf only once its own builder has
+finished it, and any edit afterwards takes that back. It is the one check that
+catches a goal nothing can reach. A test run is the real game in every respect a
+player can feel and different in exactly two: the server never hears about it,
+and it ends back in the editor.
+
+Levels are kept in `localStorage` on the device that built them. Clockshot's
+server is the authority on runs and scores and knows nothing about layout —
+arenas ship inside the client — so there is no endpoint a built level could be
+posted to yet, and the editor says so rather than pretending otherwise.
+
 ## Full-screen play
 
-A run takes over the screen, on a phone and on a desktop, inside Reddit and out.
-There are two ways to do that and the game uses whichever one it has:
+A run takes over the screen, on a phone and on a desktop, inside Reddit and out,
+and so does the builder — a grid and a palette have even less use for a panel in
+a feed than a swing does. There are two ways to take a screen and the game uses
+whichever one it has:
 
 - **Inside a Reddit post**, the host owns the presentation. Reddit shows a post's
   web view inline by default — a fixed-height panel in a feed — and will expand
@@ -138,10 +184,17 @@ mouse events, and Phaser reads those as a second press, so every menu button
 fires twice.
 
 So `src/clockshot/immersive.ts` takes the click where it can be had: a
-transparent DOM button laid over PLAY, and over PLAY AGAIN. It swallows the
-pointer events Phaser would otherwise double-handle, drives the canvas button's
-own pressed state and action so nothing on screen behaves differently, and
-carries the request for full screen on the real click underneath.
+transparent DOM button laid over every tap that opens something — PLAY, PLAY
+AGAIN, BUILD A LEVEL, the shelf's PLAY / EDIT / NEW LEVEL, and the editor's
+TEST. It swallows the pointer events Phaser would otherwise double-handle,
+drives the canvas control's own pressed state and action so nothing on screen
+behaves differently, and carries the request for full screen on the real click
+underneath.
+
+The editor's controls are rectangles drawn into a `Graphics`, not `Button`s, so
+a proxy stands in for anything that can say where it is and be pressed
+(`TapTarget`) rather than for a `Button` specifically. That is the whole of what
+it took to make building full screen too.
 
 The request deliberately names no entrypoint. That is what tells the client to
 expand the web view it already has rather than load one: naming an entrypoint
@@ -273,16 +326,17 @@ all intentional:
 
 ## Testing
 
-155 automated tests, all passing. The API tests import `src/server/index.ts`
+190 automated tests, all passing. The API tests import `src/server/index.ts`
 itself and drive it over real HTTP against an in-memory Redis.
 
 | Suite | Tests | Covers |
 |---|---|---|
-| `tests/community.test.ts` | 26 | round derivation, atomic banks, negative clamping, leaderboards, activity trimming, round transitions, TTLs |
-| `tests/runs.test.ts` | 34 | run lifecycle, duplicate claiming under concurrency, timing windows, rate limits, tally sanitizing, scoring caps |
-| `tests/api.test.ts` | 42 | logged-out viewers, team locking, full runs, concurrent submissions, expiry, round rollover, malformed bodies, Redis failure |
-| `tests/arena.test.ts` | 37 | arena selection per round, every arena reachable and completable, seeded layout, the seeded rng |
-| `tests/immersive.test.ts` | 16 | the full-screen request and what it puts on the wire, and the tap proxy that carries it |
+| `tests/community.test.ts` | 24 | round derivation, atomic banks, negative clamping, leaderboards, activity trimming, round transitions, TTLs |
+| `tests/runs.test.ts` | 35 | run lifecycle, duplicate claiming under concurrency, timing windows, rate limits, tally sanitizing, scoring caps |
+| `tests/api.test.ts` | 28 | logged-out viewers, team locking, full runs, concurrent submissions, expiry, round rollover, malformed bodies, Redis failure |
+| `tests/arena.test.ts` | 55 | arena selection per round, every arena reachable and completable, seeded layout, the seeded rng |
+| `tests/build.test.ts` | 24 | the editor's grid format: platform merging, derived patrols, budget and caps, validation, and reading storage back |
+| `tests/immersive.test.ts` | 24 | the full-screen request and what it puts on the wire, and the tap proxy that carries it |
 
 Manually verified in a real browser (Playwright driving Chrome, including
 multi-touch via CDP): boot, team selection, a complete 30-second run with

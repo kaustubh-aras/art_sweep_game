@@ -25,6 +25,7 @@ import {
   TIME_LOSS,
 } from '@/shared/config';
 import { EMPTY_TALLY, type RunStartResponse, type RunTally } from '@/shared/api';
+import type { Practice, PracticeResult } from '@/clockshot/practice';
 
 interface EnemyData {
   from: number;
@@ -67,6 +68,15 @@ export class PlayScene extends Phaser.Scene {
   private run!: RunStartResponse;
   /** The place this window is played in. Chosen by the server, drawn here. */
   private arena!: Arena;
+  /**
+   * Set when this is somebody testing a level they built.
+   *
+   * A test run is the same game in every respect a player can feel — the same
+   * clock, the same rope, the same checkpoints — and different in exactly two:
+   * the server never hears about it, and it ends back in the editor instead of
+   * on a results screen.
+   */
+  private practice: Practice | null = null;
   private killY = 0;
 
   /**
@@ -126,9 +136,12 @@ export class PlayScene extends Phaser.Scene {
     super('cs-play');
   }
 
-  init(data: { run: RunStartResponse; resume?: Resume }): void {
+  init(data: { run: RunStartResponse; resume?: Resume; arena?: Arena; practice?: Practice }): void {
     this.run = data.run;
-    this.arena = arenaAt(data.run.arenaIndex);
+    // A built level arrives already converted; a real run looks its arena up by
+    // the index the server chose.
+    this.arena = data.arena ?? arenaAt(data.run.arenaIndex);
+    this.practice = data.practice ?? null;
     this.killY = killYOf(this.arena);
 
     const r = data.resume;
@@ -394,8 +407,14 @@ export class PlayScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(882);
 
+    // Says which level is being tested, so a builder is never a beat unsure
+    // whether they are looking at their own arena or the community's.
     this.hudTeam = this.add
-      .text(0, 0, '', { fontFamily: FONT, fontSize: '13px', color: hex(C.dim) })
+      .text(0, 0, this.practice ? `TEST · ${this.practice.name.toUpperCase()}` : '', {
+        fontFamily: FONT,
+        fontSize: '13px',
+        color: hex(C.cyan),
+      })
       .setOrigin(0, 0.5)
       .setScrollFactor(0)
       .setDepth(882);
@@ -649,8 +668,10 @@ export class PlayScene extends Phaser.Scene {
       // The wall clock is still the server's business: a run that has been open
       // absurdly long could not have survived on pickups, and the server would
       // reject it anyway, so end it here rather than let the player keep going.
+      // A test run has no server to answer to, so it is never cut short — a
+      // builder poking at their own level should be able to take all day.
       const openFor = store.serverNow() - this.run.startedAt;
-      if (openFor > MAX_RUN_MS) {
+      if (!this.practice && openFor > MAX_RUN_MS) {
         // The run has been open so long the server will refuse it whatever
         // happens next. Stop here rather than let the player keep trying.
         this.timeMs = 0;
@@ -788,7 +809,13 @@ export class PlayScene extends Phaser.Scene {
   private pause(): void {
     if (this.finished || this.scene.isPaused()) return;
     this.scene.pause();
-    this.scene.launch('cs-pause', { from: 'cs-play' });
+    this.scene.launch('cs-pause', {
+      from: 'cs-play',
+      // Quitting a test drops the builder back where they came from, and calls
+      // it what it is: there is no run here to abandon.
+      quitTo: this.practice?.returnTo ?? 'cs-menu',
+      quitCaption: this.practice ? 'END TEST' : 'ABANDON RUN',
+    });
   }
 
   /** Touched the goal: the run is a success and the clock stops where it is. */
@@ -832,7 +859,14 @@ export class PlayScene extends Phaser.Scene {
     // Just long enough to read the word, and no longer.
     this.cameras.main.fadeOut(220, 7, 11, 22);
     this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
-      this.scene.restart({ run: this.run, resume });
+      // The arena has to come back round with the restart: a built level is not
+      // something `arenaAt` could ever find again.
+      this.scene.restart({
+        run: this.run,
+        resume,
+        arena: this.arena,
+        practice: this.practice ?? undefined,
+      });
     });
   }
 
@@ -854,9 +888,18 @@ export class PlayScene extends Phaser.Scene {
     this.tally.anchorsUsed = this.player.anchorsUsed.size;
     this.controls.setVisible(false);
     sfx.runEnd();
+
+    // A test run is never submitted and never scored. It reports one thing —
+    // whether the goal was reached and with what clock — to whoever launched it.
+    const back = this.practice;
+    const result: PracticeResult = {
+      clearedMs: this.tally.reachedGoal ? this.tally.msLeft : null,
+    };
+
     this.cameras.main.fadeOut(600, 7, 11, 22);
     this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
-      this.scene.start('cs-results', { runId: this.run.runId, tally: this.tally });
+      if (back) this.scene.start(back.returnTo, { result });
+      else this.scene.start('cs-results', { runId: this.run.runId, tally: this.tally });
     });
   }
 

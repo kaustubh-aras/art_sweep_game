@@ -9,6 +9,8 @@ import { ResultsScene } from '@/scenes/clockshot/ResultsScene';
 import { LeaderboardScene } from '@/scenes/clockshot/LeaderboardScene';
 import { PauseScene } from '@/scenes/clockshot/PauseScene';
 import { ErrorScene } from '@/scenes/clockshot/ErrorScene';
+import { EditorScene } from '@/scenes/clockshot/EditorScene';
+import { LevelsScene } from '@/scenes/clockshot/LevelsScene';
 
 /**
  * Phaser configuration for Clockshot.
@@ -54,5 +56,9 @@ export const gameConfig: Phaser.Types.Core.GameConfig = {
     LeaderboardScene,
     PauseScene,
     ErrorScene,
+    // The builder and its shelf. Neither is ever started automatically — the
+    // menu is the only door into them.
+    EditorScene,
+    LevelsScene,
   ],
 };

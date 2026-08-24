@@ -7,6 +7,7 @@ import {
   isFullScreen,
   requestFullScreen,
   TapProxy,
+  type TapTarget,
 } from '@/clockshot/immersive';
 
 /**
@@ -399,5 +400,35 @@ describe('the tap proxy', () => {
     proxy.destroy();
 
     expect(document.querySelector('.tap-proxy')).toBeNull();
+  });
+
+  it('stands in for a control that is not a Button at all', () => {
+    // The level editor draws its own controls into a Graphics, so there is no
+    // Button to hand over — it describes the rectangle instead. Everything the
+    // proxy does has to work the same way for it, which is what lets TEST ask
+    // for the screen rather than leaving building stuck in whatever panel
+    // Reddit gave it. (The request itself needs a trusted click, which jsdom
+    // will not forge; `requestFullScreen` is covered directly above.)
+    enterWebView();
+    let clicks = 0;
+    const pressed: boolean[] = [];
+    const target: TapTarget = {
+      bounds: () => ({ x: 120, y: 600, w: 96, h: 44 }),
+      isEnabled: true,
+      isVisible: true,
+      caption: 'TEST',
+      setPressed: (on: boolean) => pressed.push(on),
+      click: () => (clicks += 1),
+    };
+
+    attachTapProxy(fakeScene(mountCanvas()), target);
+    proxyElement().dispatchEvent(new Event('pointerdown'));
+    proxyElement().dispatchEvent(new Event('pointerup'));
+    proxyElement().click();
+
+    expect(rectOf(proxyElement())).toEqual(['120px', '600px', '96px', '44px']);
+    expect(proxyElement().getAttribute('aria-label')).toBe('TEST');
+    expect(pressed).toEqual([true, false]);
+    expect(clicks).toBe(1);
   });
 });
