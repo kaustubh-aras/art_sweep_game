@@ -71,9 +71,20 @@ instead of decaying.
 
 ## Full-screen play
 
-A run takes over the screen. Reddit presents a post's web view inline by default
-— a fixed-height panel in a feed — and will expand it to a full-screen modal on
-request, but only during a **trusted DOM click**. A game drawn entirely on a
+A run takes over the screen, on a phone and on a desktop, inside Reddit and out.
+There are two ways to do that and the game uses whichever one it has:
+
+- **Inside a Reddit post**, the host owns the presentation. Reddit shows a post's
+  web view inline by default — a fixed-height panel in a feed — and will expand
+  it to a full-screen modal on request. The browser's own Fullscreen API is not
+  available to ask with: the post is an iframe that does not carry the
+  permission.
+- **Anywhere else** — a desktop browser, a phone browser, `npm run dev` — there
+  is no host to ask, so `Element.requestFullscreen()` is called on the document
+  directly. Escape, or the platform's back gesture, hands the screen back.
+
+Either way the request only works during a **trusted DOM click**. A game drawn
+entirely on a
 `<canvas>` never sees one: Phaser cancels the touch events that would produce
 it, which is exactly what stops a swing from scrolling the page. Turning that
 off is worse than the problem — a phone then follows each tap with emulated
@@ -91,10 +102,17 @@ expand the web view it already has rather than load one: naming an entrypoint
 means "reload", which would restart the game at the menu on the very tap that
 asked to play.
 
-Staying inline is a supported outcome rather than a failure. Outside a Reddit
-web view — local play, the dev server, the tests — nothing is added to the page
-at all, and on a client with no expanded presentation the refusal is logged and
-the run goes ahead in the panel.
+Staying where it is remains a supported outcome rather than a failure. On a
+client with no expanded presentation, and on an iPhone browser — where the
+Fullscreen API covers video only — no stand-in is added to the page at all and
+the run goes ahead in the window, which is already a fixed, notch-safe layout
+that fills the viewport.
+
+Entering or leaving full screen changes the viewport, and some clients animate
+the transition and report the old size for a beat. `src/ui/viewport.ts` measures
+again over the next half second after every `fullscreenchange`, for the same
+reason it does after an orientation change: the game must never be laid out for
+the window it has just left.
 
 ## Technology
 
@@ -112,7 +130,7 @@ the run goes ahead in the panel.
 ```bash
 npm install
 npm run typecheck     # client + server projects
-npm test              # 155 tests
+npm test              # 162 tests
 npm run build         # typecheck + client bundle + server bundle
 ```
 

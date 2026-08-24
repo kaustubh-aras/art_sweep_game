@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { C, FONT, hex, teamColor, teamName } from '@/clockshot/theme';
 import { sfx } from '@/clockshot/sfx';
 import { activityLine, store, formatClock } from '@/clockshot/store';
-import { Button, drawTeamBar, fadeTo, layoutOf, text } from '@/clockshot/ui';
+import { Button, drawTeamBar, fadeTo, fitText, layoutOf, text } from '@/clockshot/ui';
 import { api, NetError } from '@/clockshot/net';
 import { attachTapProxy, type TapProxy } from '@/clockshot/immersive';
 import { arenaAt } from '@/clockshot/arena';
@@ -34,7 +34,7 @@ export class MenuScene extends Phaser.Scene {
   private dashBtn!: Button;
   private soundBtn!: Button;
 
-  /** Present only inside a Reddit post, where PLAY also asks for full screen. */
+  /** Present wherever full screen can be had; PLAY is the tap that asks. */
   private playProxy: TapProxy | null = null;
 
   private unsubscribe: (() => void) | null = null;
@@ -58,6 +58,7 @@ export class MenuScene extends Phaser.Scene {
     this.blueLabel = text(this, 0, 0, '0s BLUE', 15, C.blue, 'right');
     this.leaderLabel = text(this, 0, 0, '', 13, C.ink);
     this.roundLabel = text(this, 0, 0, '', 13, C.dim);
+    this.roundLabel.setAlign('center').setLineSpacing(3);
     this.prevLabel = text(this, 0, 0, '', 11, C.faint);
     this.youLabel = text(this, 0, 0, '', 12, C.dim);
     this.feedHeading = text(this, 0, 0, 'LATEST', 11, C.cyan, 'left');
@@ -194,7 +195,22 @@ export class MenuScene extends Phaser.Scene {
       lines.length > 0 ? lines.join('\n') : '· Nothing yet this round. Be the first.',
     );
 
+    this.fitLabels();
     this.drawBars();
+  }
+
+  /**
+   * Sizes the labels built from whatever the server said.
+   *
+   * A Reddit username can be twenty characters long, and the line it sits in
+   * also carries a team and a running total, so its width is not something this
+   * screen can know. Same for the previous round's two banks. They shrink to the
+   * panel rather than run off the side of it.
+   */
+  private fitLabels(): void {
+    const L = layoutOf(this);
+    fitText(this.youLabel, 11.5 * L.ui, L.iw - 24 * L.ui);
+    fitText(this.prevLabel, 10 * L.ui, L.iw - 28 * L.ui);
   }
 
   private drawBars(): void {
@@ -206,7 +222,7 @@ export class MenuScene extends Phaser.Scene {
   }
 
   private barY(L: ReturnType<typeof layoutOf>): number {
-    return L.y + 96 * L.ui;
+    return L.y + 84 * L.ui;
   }
 
   private relayout(): void {
@@ -221,11 +237,20 @@ export class MenuScene extends Phaser.Scene {
     g.lineStyle(1.5, C.panelEdge, 0.6);
     g.strokeRoundedRect(L.x, L.y + 4 * L.ui, L.iw, panelH, 16 * L.ui);
 
-    this.leaderLabel.setPosition(L.cx, L.y + 30 * L.ui).setFontSize(Math.round(14 * L.ui));
-    this.redLabel.setPosition(L.x + 18 * L.ui, L.y + 66 * L.ui).setFontSize(Math.round(15 * L.ui));
-    this.blueLabel.setPosition(L.x + L.iw - 18 * L.ui, L.y + 66 * L.ui).setFontSize(Math.round(15 * L.ui));
-    this.roundLabel.setPosition(L.cx, L.y + 124 * L.ui).setFontSize(Math.round(12 * L.ui));
-    this.prevLabel.setPosition(L.cx, L.y + 144 * L.ui).setFontSize(Math.round(10.5 * L.ui));
+    this.leaderLabel.setPosition(L.cx, L.y + 28 * L.ui).setFontSize(Math.round(14 * L.ui));
+    this.redLabel.setPosition(L.x + 18 * L.ui, L.y + 60 * L.ui).setFontSize(Math.round(15 * L.ui));
+    this.blueLabel.setPosition(L.x + L.iw - 18 * L.ui, L.y + 60 * L.ui).setFontSize(Math.round(15 * L.ui));
+
+    // The round line is anchored by its top and wrapped to the panel, because
+    // it is the one label whose length is not known here: arena name, clock and
+    // player count together are wider than a phone, and as a single centred
+    // line it ran off both ends of the panel it is supposed to sit inside.
+    this.roundLabel
+      .setPosition(L.cx, L.y + 106 * L.ui)
+      .setOrigin(0.5, 0)
+      .setFontSize(Math.round(10.5 * L.ui))
+      .setWordWrapWidth(L.iw - 28 * L.ui);
+    this.prevLabel.setPosition(L.cx, L.y + 145 * L.ui).setFontSize(Math.round(10 * L.ui));
 
     const titleY = L.y + panelH + 54 * L.ui;
     this.title.setPosition(L.cx, titleY).setFontSize(Math.round(34 * L.ui));
@@ -271,6 +296,7 @@ export class MenuScene extends Phaser.Scene {
       b.setSize(bw, bh).setFontSize(16 * L.ui);
     }
 
+    this.fitLabels();
     this.playProxy?.sync();
     this.drawBars();
   }
@@ -287,9 +313,10 @@ export class MenuScene extends Phaser.Scene {
     const arena = arenaAt(arenaIndexAt(c.roundIndex));
     return [
       arena.name,
-      `ends in ${formatClock(store.msLeftInRound())}`,
-      `${c.players} player${c.players === 1 ? '' : 's'}`,
-    ].join('  ·  ');
+      `ends in ${formatClock(store.msLeftInRound())}  ·  ${c.players} player${
+        c.players === 1 ? '' : 's'
+      }`,
+    ].join('\n');
   }
 
   update(): void {

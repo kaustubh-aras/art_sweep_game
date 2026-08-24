@@ -3,7 +3,7 @@ import { C, FONT, hex, teamColor, teamName } from '@/clockshot/theme';
 import { sfx } from '@/clockshot/sfx';
 import { activityLine, store } from '@/clockshot/store';
 import { api, NetError, withRetry } from '@/clockshot/net';
-import { Button, drawTeamBar, fadeTo, layoutOf, text } from '@/clockshot/ui';
+import { Button, drawTeamBar, fadeTo, fitText, layoutOf, text } from '@/clockshot/ui';
 import { SCORE, type Team } from '@/shared/config';
 import type { RunFinishResponse, RunTally } from '@/shared/api';
 import { attachTapProxy, type TapProxy } from '@/clockshot/immersive';
@@ -365,12 +365,29 @@ export class ResultsScene extends Phaser.Scene {
         .join('\n'),
     );
 
+    this.fitLabels();
+
     if (r.adjusted) {
       // Being open about a correction beats silently changing someone's score.
       this.statusText.setText('banked (score adjusted by the server)').setColor(hex(C.gold));
     }
 
     this.drawBar();
+  }
+
+  /**
+   * Sizes the two labels whose width the server decides.
+   *
+   * Called from the layout *and* from every render, because the text arrives
+   * after the screen is first laid out: two four-figure banks, or a round total
+   * beside a community rank, are wider than the panel on a phone, and a line
+   * that runs off the edge of the panel it sits in reads as a bug.
+   */
+  private fitLabels(): void {
+    const L = layoutOf(this);
+    const inner = L.iw - 36 * L.ui;
+    fitText(this.communityText, 12 * L.ui, inner);
+    fitText(this.rankText, 11 * L.ui, inner);
   }
 
   private drawBar(): void {
@@ -389,8 +406,10 @@ export class ResultsScene extends Phaser.Scene {
 
     this.heading.setPosition(L.cx, L.y + 30 * L.ui).setFontSize(Math.round(20 * L.ui));
     this.scoreText.setPosition(L.cx, L.y + 66 * L.ui).setFontSize(Math.round(38 * L.ui));
-    this.communityText.setPosition(L.cx, L.y + 126 * L.ui).setFontSize(Math.round(12 * L.ui));
-    this.rankText.setPosition(L.cx, L.y + 200 * L.ui).setFontSize(Math.round(11 * L.ui));
+
+    this.communityText.setPosition(L.cx, L.y + 126 * L.ui);
+    this.rankText.setPosition(L.cx, L.y + 200 * L.ui);
+    this.fitLabels();
 
     const bw = Math.min(300 * L.ui, L.iw - 40 * L.ui);
     const bh = 50 * L.ui;
@@ -443,7 +462,16 @@ export class ResultsScene extends Phaser.Scene {
     this.redBtn.setPosition(L.cx, cy).setSize(bw, cbh).setFontSize(18 * L.ui);
 
     const statusY = this.choosing ? cy - cbh / 2 - 16 * L.ui : by - bh / 2 - 16 * L.ui;
-    this.statusText.setPosition(L.cx, statusY).setFontSize(Math.round(11 * L.ui));
+    // The status line is the only label that can be handed a whole sentence —
+    // a server error, or the share text when the clipboard is blocked — so it
+    // wraps instead of running off both edges of the screen.
+    this.statusText
+      .setPosition(L.cx, statusY)
+      .setOrigin(0.5, 1)
+      .setFontSize(Math.round(11 * L.ui))
+      .setAlign('center')
+      .setLineSpacing(3)
+      .setWordWrapWidth(L.iw - 24 * L.ui);
 
     this.playProxy?.sync();
     this.drawBar();

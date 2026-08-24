@@ -80,6 +80,29 @@ export function text(
     .setOrigin(align === 'center' ? 0.5 : align === 'left' ? 0 : 1, 0.5);
 }
 
+/**
+ * Shrinks a label until it fits the width it has been given.
+ *
+ * Most labels are literals and can be sized by hand. These are not: a rank, a
+ * player count, an arena name or a server message is only as long as it turns
+ * out to be, and a line that overruns the panel it sits in reads as a bug —
+ * where the same line a point or two smaller reads as designed.
+ */
+export function fitText(
+  t: Phaser.GameObjects.Text,
+  size: number,
+  maxWidth: number,
+  floor = 0.72,
+): void {
+  const min = Math.max(9, Math.round(size * floor));
+  let f = Math.max(min, Math.round(size));
+  t.setFontSize(f);
+  while (t.width > maxWidth && f > min) {
+    f -= 1;
+    t.setFontSize(f);
+  }
+}
+
 export interface ButtonOptions {
   width: number;
   height?: number;

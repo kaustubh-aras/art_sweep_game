@@ -4,14 +4,26 @@ import { dpr } from '../ui/viewport';
 import type { Button } from './ui';
 
 /**
- * Full-screen play inside a Reddit post.
+ * Full-screen play, on every device the game runs on.
  *
- * Reddit presents a post's web view *inline* by default — a fixed-height panel
- * in a feed, between other posts — and will show it as a full-screen modal
- * instead, but only if the app asks during a **trusted DOM click**. A game
- * drawn entirely on a `<canvas>` never sees one: Phaser calls `preventDefault()`
- * on every touch over the canvas, which is what stops a swing from turning into
- * a page scroll, and that also suppresses the click a tap would have produced.
+ * There are two ways to take over a screen, and the game uses whichever one it
+ * has:
+ *
+ * - **Inside a Reddit post.** Reddit presents a post's web view *inline* by
+ *   default — a fixed-height panel in a feed, between other posts — and will
+ *   show it as a full-screen modal instead, but only if the app asks. The
+ *   browser's own full-screen API is not available to ask with: the post lives
+ *   in an iframe that does not carry the permission.
+ * - **Anywhere else** — a desktop browser, a phone browser, `npm run dev` —
+ *   there is no host to ask, so the Fullscreen API is used directly on the
+ *   document. iOS Safari on iPhone implements it for video only; there the game
+ *   stays as it was, which is already a fixed, full-viewport layout.
+ *
+ * Both routes have the same precondition: they only work during a **trusted DOM
+ * click**. A game drawn entirely on a `<canvas>` never sees one — Phaser calls
+ * `preventDefault()` on every touch over the canvas, which is what stops a
+ * swing from turning into a page scroll, and that also suppresses the click a
+ * tap would have produced.
  *
  * Switching that suppression off is not a way out. Without it a phone follows
  * the tap with emulated mouse events, and Phaser feeds those through its window
@@ -22,9 +34,6 @@ import type { Button } from './ui';
  * events Phaser would otherwise pick up (nothing is handled twice), drives that
  * button's own pressed state and action so the screen behaves as before, and
  * carries the request for full screen on the real click underneath.
- *
- * All of it is inert outside Reddit: `globalThis.devvit` exists only in a web
- * view, so local play, the dev server and the tests get no proxy and no effect.
  */
 
 /**
@@ -42,38 +51,112 @@ function inWebView(): boolean {
   return typeof (globalThis as { devvit?: unknown }).devvit === 'object';
 }
 
-/** Whether the post is currently presented full screen. */
+/** Whether the post is currently presented full screen by Reddit. */
 export function isExpanded(): boolean {
   // `getWebViewMode()` reads the `devvit` global unguarded, so it may only be
   // called once we know there is one.
   return inWebView() && getWebViewMode() === 'expanded';
 }
 
+/** The vendor-prefixed corners of the Fullscreen API, as optional members. */
+interface FullScreenDoc extends Document {
+  webkitFullscreenElement?: Element | null;
+  webkitFullscreenEnabled?: boolean;
+}
+
+interface FullScreenEl extends HTMLElement {
+  webkitRequestFullscreen?: () => unknown;
+}
+
+function doc(): FullScreenDoc | null {
+  return typeof document === 'undefined' ? null : (document as FullScreenDoc);
+}
+
+/** The element handed to the browser: the whole page, so nothing is cropped. */
+function fullScreenTarget(): FullScreenEl | null {
+  return (doc()?.documentElement as FullScreenEl | undefined) ?? null;
+}
+
+/** Whether this browser will put the page full screen at all. */
+export function canBrowserFullScreen(): boolean {
+  const d = doc();
+  const el = fullScreenTarget();
+  if (!d || !el) return false;
+  // `fullscreenEnabled` is false in an iframe without the permission — exactly
+  // the Reddit case — and undefined on the older prefixed API, where the
+  // request is worth attempting anyway.
+  const allowed = d.fullscreenEnabled ?? d.webkitFullscreenEnabled ?? true;
+  const askable =
+    typeof el.requestFullscreen === 'function' || typeof el.webkitRequestFullscreen === 'function';
+  return allowed !== false && askable;
+}
+
+/** Whether the browser is showing the page full screen right now. */
+export function isBrowserFullScreen(): boolean {
+  const d = doc();
+  if (!d) return false;
+  return (d.fullscreenElement ?? d.webkitFullscreenElement ?? null) !== null;
+}
+
+/** Whether the game has the whole screen, by either route. */
+export function isFullScreen(): boolean {
+  return isExpanded() || isBrowserFullScreen();
+}
+
 /**
- * Asks Reddit to show the post full screen, on the click that is happening now.
+ * Asks the browser for the screen. Says whether the request went out.
+ *
+ * `requestFullscreen` rejects rather than throws when a browser declines, and
+ * declining is not worth interrupting anything for: the game simply stays in
+ * the window, which is how it has always played.
+ */
+function requestBrowserFullScreen(): boolean {
+  const el = fullScreenTarget();
+  if (!el || !canBrowserFullScreen()) return false;
+  try {
+    const asked = el.requestFullscreen ? el.requestFullscreen() : el.webkitRequestFullscreen?.();
+    void Promise.resolve(asked).catch((err: unknown) => {
+      console.warn('[clockshot] full screen refused', err);
+    });
+  } catch (err) {
+    console.warn('[clockshot] full screen refused', err);
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Takes over the screen, on the click that is happening now.
  *
  * Only a click the browser itself produced counts; Reddit rejects anything a
  * script dispatched, and so does this. Failure is not worth interrupting
- * anything for either: an older client, or a surface with no expanded
- * presentation, simply leaves the game inline — which is how it has always
- * played.
+ * anything for either: an older client, or a surface with no full-screen
+ * presentation of any kind, simply leaves the game where it is.
  */
 export function requestFullScreen(event: MouseEvent): void {
-  if (!inWebView() || !event.isTrusted || isExpanded()) return;
-  try {
-    expandInPlace(event);
-  } catch (err) {
-    console.warn('[clockshot] expanded mode refused', err);
+  if (!event.isTrusted || isFullScreen()) return;
+
+  if (inWebView()) {
+    // Inside a post the host owns the presentation, and the Fullscreen API is
+    // not ours to call: the iframe does not carry the permission.
+    try {
+      expandInPlace(event);
+    } catch (err) {
+      console.warn('[clockshot] expanded mode refused', err);
+      return;
+    }
+  } else if (!requestBrowserFullScreen()) {
     return;
   }
+
   settleViewport();
 }
 
 /**
  * Re-measures the canvas after the presentation changes.
  *
- * `initViewport` already resizes on every `resize` event, and an iframe growing
- * to full screen normally fires one. "Normally" is doing real work in that
+ * `initViewport` already resizes on every `resize` event, and a viewport going
+ * full screen normally fires one. "Normally" is doing real work in that
  * sentence: the transition is animated on some clients, which report the old
  * size for a beat, exactly like an iOS rotation. Measuring again over the next
  * second costs nothing and removes the chance of the game being laid out for
@@ -155,13 +238,15 @@ export class TapProxy {
 /**
  * Lays a tap proxy over a button, for the buttons that start a run.
  *
- * Returns `null` — and changes nothing — outside a Reddit web view, or when the
- * post is already full screen and the canvas can simply be tapped. The caller
- * owns what it gets back: `sync()` it whenever the screen is laid out, and
- * `destroy()` it when the screen goes away.
+ * Returns `null` — and changes nothing — when the game already has the whole
+ * screen and the canvas can simply be tapped, or when this device offers no way
+ * to take it: an iPhone browser, where the Fullscreen API covers video only.
+ * The caller owns what it gets back: `sync()` it whenever the screen is laid
+ * out, and `destroy()` it when the screen goes away.
  */
 export function attachTapProxy(scene: Phaser.Scene, button: Button): TapProxy | null {
-  if (!inWebView() || isExpanded()) return null;
+  if (isFullScreen()) return null;
+  if (!inWebView() && !canBrowserFullScreen()) return null;
 
   const parent = scene.game.canvas?.parentElement;
   if (!parent) return null;

@@ -1,14 +1,22 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Button } from '@/clockshot/ui';
-import { attachTapProxy, isExpanded, requestFullScreen, TapProxy } from '@/clockshot/immersive';
+import {
+  attachTapProxy,
+  isExpanded,
+  isFullScreen,
+  requestFullScreen,
+  TapProxy,
+} from '@/clockshot/immersive';
 
 /**
- * Full-screen ("expanded") presentation is the one part of the client that
- * playing the game locally cannot exercise: it does something only inside a
- * Reddit web view, and what matters about it is the message it puts on the
- * wire. These tests drive the real `@devvit/web/client` implementation and read
- * what it posts to the host.
+ * Full-screen presentation is the one part of the client that playing the game
+ * locally cannot fully exercise, and it has two implementations: an effect on
+ * the wire inside a Reddit web view, and the browser's own Fullscreen API
+ * everywhere else. The web-view tests drive the real `@devvit/web/client` and
+ * read what it posts to the host; the browser tests install the Fullscreen API
+ * that jsdom does not have, which is also what makes "this device cannot do it"
+ * the default here — the case an iPhone browser is in.
  */
 
 /** `WebViewImmersiveMode` from the effect protocol. */
@@ -100,6 +108,30 @@ function rectOf(el: HTMLElement): string[] {
   return [el.style.left, el.style.top, el.style.width, el.style.height];
 }
 
+/** Property names put on the document by `withFullScreenApi`, for cleanup. */
+const installed: [object, string][] = [];
+
+function define(target: object, name: string, value: unknown): void {
+  Object.defineProperty(target, name, { configurable: true, writable: true, value });
+  installed.push([target, name]);
+}
+
+/**
+ * Gives jsdom the Fullscreen API, which it does not implement.
+ *
+ * Returns the request spy, so a test can assert the page really was handed to
+ * the browser rather than merely that nothing threw.
+ */
+function withFullScreenApi(opts: { enabled?: boolean; active?: boolean } = {}): {
+  request: ReturnType<typeof vi.fn>;
+} {
+  const request = vi.fn(() => Promise.resolve());
+  define(document, 'fullscreenEnabled', opts.enabled ?? true);
+  define(document, 'fullscreenElement', opts.active ? document.documentElement : null);
+  define(document.documentElement, 'requestFullscreen', request);
+  return { request };
+}
+
 beforeEach(() => {
   post = vi.fn();
   warn = vi.fn();
@@ -108,6 +140,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  for (const [target, name] of installed.splice(0)) {
+    delete (target as Record<string, unknown>)[name];
+  }
   delete (globalThis as { devvit?: unknown }).devvit;
   document.body.innerHTML = '';
   vi.restoreAllMocks();
@@ -125,7 +160,9 @@ describe('asking for full screen', () => {
     expect(modeEffects()).toEqual([{ immersiveMode: IMMERSIVE, entryUrl: undefined }]);
   });
 
-  it('says nothing outside a Reddit web view', () => {
+  it('says nothing on a device that cannot do it at all', () => {
+    // jsdom has no Fullscreen API, which is the iPhone-browser case: there is
+    // no host to ask and nothing to call, so the game stays as it is.
     requestFullScreen(realClick());
 
     expect(isExpanded()).toBe(false);
@@ -133,6 +170,63 @@ describe('asking for full screen', () => {
     // Silence, not a caught exception: the Devvit client reads a global that
     // only a web view defines, so it may not be called at all out here.
     expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('asks the browser for the screen outside a Reddit web view', () => {
+    const { request } = withFullScreenApi();
+
+    requestFullScreen(realClick());
+
+    expect(request).toHaveBeenCalledTimes(1);
+    // Nothing goes on the wire: there is no host out here to send it to.
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('asks the host, not the browser, inside a Reddit web view', () => {
+    // A post is an iframe without the full-screen permission, so the browser
+    // API is not ours to call even on a client that defines it.
+    const { request } = withFullScreenApi({ enabled: false });
+    enterWebView();
+
+    requestFullScreen(realClick());
+
+    expect(modeEffects()).toEqual([{ immersiveMode: IMMERSIVE, entryUrl: undefined }]);
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it('does not ask again when the browser is already full screen', () => {
+    const { request } = withFullScreenApi({ active: true });
+    expect(isFullScreen()).toBe(true);
+
+    requestFullScreen(realClick());
+
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it('refuses a browser click no user made', () => {
+    const { request } = withFullScreenApi();
+
+    requestFullScreen({ type: 'click', isTrusted: false, target: document.body } as MouseEvent);
+
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it('re-measures the viewport after the browser hands over the screen', () => {
+    vi.useFakeTimers();
+    try {
+      withFullScreenApi();
+      const resized = vi.fn();
+      window.addEventListener('resize', resized);
+
+      requestFullScreen(realClick());
+      vi.advanceTimersByTime(1000);
+      window.removeEventListener('resize', resized);
+
+      // Browsers animate the transition, reporting the old size for a beat.
+      expect(resized.mock.calls.length).toBeGreaterThan(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('refuses a click no user made', () => {
@@ -172,11 +266,28 @@ describe('asking for full screen', () => {
 });
 
 describe('the tap proxy', () => {
-  it('is not created outside a Reddit web view', () => {
+  it('is not created where the screen cannot be taken', () => {
+    // No web view and no Fullscreen API: there is nothing for a trusted click
+    // to do, so the canvas is left to handle its own taps.
     const { button } = fakeButton();
 
     expect(attachTapProxy(fakeScene(mountCanvas()), button)).toBeNull();
     expect(document.querySelector('.tap-proxy')).toBeNull();
+  });
+
+  it('is created outside a Reddit web view when the browser can full-screen', () => {
+    withFullScreenApi();
+    const { button } = fakeButton();
+
+    expect(attachTapProxy(fakeScene(mountCanvas()), button)).not.toBeNull();
+    expect(document.querySelector('.tap-proxy')).not.toBeNull();
+  });
+
+  it('is not created when the browser is already full screen', () => {
+    withFullScreenApi({ active: true });
+    const { button } = fakeButton();
+
+    expect(attachTapProxy(fakeScene(mountCanvas()), button)).toBeNull();
   });
 
   it('is not created when the post is already full screen', () => {
