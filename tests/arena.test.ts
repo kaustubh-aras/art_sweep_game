@@ -149,9 +149,72 @@ describe('every arena is playable', () => {
         }
       });
 
-      it('offers a golden clock and somewhere to steal from', () => {
+      it('offers somewhere to put the golden clock', () => {
         expect(arena.golden.length).toBeGreaterThan(0);
-        expect(arena.enemy.length).toBeGreaterThan(0);
+      });
+
+      it('puts the goal a long way from the spawn', () => {
+        // The run *is* the journey between these two points. A goal near the
+        // spawn would make the whole arena optional.
+        const d = Math.hypot(arena.goal.x - arena.spawn.x, arena.goal.y - arena.spawn.y);
+        expect(d).toBeGreaterThan(900);
+      });
+
+      it('keeps the goal inside the world and off the spikes', () => {
+        expect(arena.goal.x).toBeGreaterThanOrEqual(0);
+        expect(arena.goal.x).toBeLessThanOrEqual(arena.world.width);
+        expect(arena.goal.y).toBeGreaterThanOrEqual(0);
+        expect(arena.goal.y).toBeLessThanOrEqual(arena.world.height);
+        const inSpikes = arena.hazards.some(
+          (h) =>
+            arena.goal.x >= h.x - 40 &&
+            arena.goal.x <= h.x + h.w + 40 &&
+            Math.abs(h.y - arena.goal.y) < 80,
+        );
+        expect(inSpikes).toBe(false);
+      });
+
+      it('lays checkpoints between the spawn and the goal', () => {
+        expect(arena.checkpoints.length).toBeGreaterThan(0);
+        const toGoal = Math.hypot(
+          arena.goal.x - arena.spawn.x,
+          arena.goal.y - arena.spawn.y,
+        );
+        for (const c of arena.checkpoints) {
+          // A checkpoint behind the spawn or past the goal is not a safety net.
+          const fromSpawn = Math.hypot(c.x - arena.spawn.x, c.y - arena.spawn.y);
+          expect(fromSpawn, `checkpoint ${c.x},${c.y} is on top of the spawn`).toBeGreaterThan(200);
+          expect(fromSpawn, `checkpoint ${c.x},${c.y} is past the goal`).toBeLessThan(toGoal + 400);
+        }
+      });
+
+      it('never puts a checkpoint inside a spike strip', () => {
+        // Restarting into a hazard would take the clock straight back off you.
+        for (const c of arena.checkpoints) {
+          const inSpikes = arena.hazards.some(
+            (h) => c.x >= h.x - 30 && c.x <= h.x + h.w + 30 && Math.abs(h.y - c.y) < 70,
+          );
+          expect(inSpikes, `checkpoint ${c.x},${c.y} sits in spikes`).toBe(false);
+        }
+      });
+
+      it('puts an anchor within reach of every checkpoint', () => {
+        // You restart standing here, so the rope has to be usable from it.
+        for (const c of arena.checkpoints) {
+          const reachable = arena.anchors.some(
+            (a) => a.y <= c.y - 30 && Math.hypot(a.x - c.x, a.y - c.y) <= GRAPPLE.range,
+          );
+          expect(reachable, `checkpoint ${c.x},${c.y} has no rope`).toBe(true);
+        }
+      });
+
+      it('puts an anchor within reach of the goal', () => {
+        // You have to be able to *arrive*. A goal with no rope near it can only
+        // be reached by a lucky fall.
+        const reachable = arena.anchors.some(
+          (a) => Math.hypot(a.x - arena.goal.x, a.y - arena.goal.y) <= GRAPPLE.range,
+        );
+        expect(reachable).toBe(true);
       });
     });
   }
@@ -188,8 +251,7 @@ describe('seeded layout', () => {
     for (const arena of ARENAS) {
       for (const seed of [1, 42, 1234, 999_999]) {
         const { pickups } = buildLayout(arena, seed);
-        expect(pickups.filter((p) => p.kind === 'fragment').length).toBeLessThanOrEqual(60);
-        expect(pickups.filter((p) => p.kind === 'enemy').length).toBeLessThanOrEqual(20);
+        expect(pickups.filter((p) => p.kind === 'clock').length).toBeLessThanOrEqual(80);
         expect(pickups.filter((p) => p.kind === 'golden').length).toBeLessThanOrEqual(6);
       }
     }

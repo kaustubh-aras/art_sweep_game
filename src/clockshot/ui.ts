@@ -245,41 +245,6 @@ export function panel(
   return g;
 }
 
-/**
- * The two-team clock bar.
- *
- * One bar rather than two numbers, because the thing a player actually wants to
- * know is who is ahead and by how much — and a proportional bar answers that
- * before the numbers are even read.
- */
-export function drawTeamBar(
-  g: Phaser.GameObjects.Graphics,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  red: number,
-  blue: number,
-): void {
-  g.clear();
-  const total = Math.max(1, red + blue);
-  const redW = Math.round((w * red) / total);
-
-  g.fillStyle(C.redDeep, 1);
-  g.fillRoundedRect(x, y, w, h, h / 2);
-  g.fillStyle(C.blueDeep, 1);
-  g.fillRoundedRect(x + redW, y, Math.max(0, w - redW), h, h / 2);
-
-  g.fillStyle(C.red, 1);
-  g.fillRoundedRect(x, y, Math.max(h, redW), h, h / 2);
-  g.fillStyle(C.blue, 1);
-  g.fillRoundedRect(x + redW, y, Math.max(h, w - redW), h, h / 2);
-
-  // A seam at the boundary, so a near-tie still reads as two teams.
-  g.lineStyle(2, C.bg, 0.9);
-  g.lineBetween(x + redW, y - 2, x + redW, y + h + 2);
-}
-
 /** Fades the scene in, so no screen ever snaps into existence. */
 export function fadeIn(scene: Phaser.Scene, ms = 220): void {
   scene.cameras.main.fadeIn(ms, 7, 11, 22);

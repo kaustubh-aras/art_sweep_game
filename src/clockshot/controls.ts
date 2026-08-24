@@ -8,7 +8,7 @@ import type { Intent } from './player';
  *
  * The touch buttons are hit-tested against every active pointer each frame
  * rather than wired to per-object input events. That is what makes "hold left,
- * hold grapple, tap jump" work at the same time — with object events, a second
+ * hold grapple, steer" work at the same time — with object events, a second
  * finger landing on a second button is easy to lose.
  */
 
@@ -35,13 +35,11 @@ interface Pad {
  * carries the device pixel ratio) before anything is drawn or hit-tested.
  */
 const R_MOVE = 29;
-const R_ACTION = 27;
 const R_GRAPPLE = 33;
 
 export class Controls {
   private pads: Pad[] = [];
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
-  private prevJump = false;
   private mouseGrapple = false;
 
   /** Set when the player has touched the screen, so we can hide key hints. */
@@ -78,7 +76,6 @@ export class Controls {
       this.makePad('left', '<', R_MOVE, C.panelEdge),
       this.makePad('right', '>', R_MOVE, C.panelEdge),
       this.makePad('grapple', 'GRAPPLE', R_GRAPPLE, C.cyan),
-      this.makePad('jump', 'JUMP', R_ACTION, C.good),
     ];
   }
 
@@ -109,17 +106,15 @@ export class Controls {
     };
 
     const rm = R_MOVE * ui;
-    const ra = R_ACTION * ui;
     const rg = R_GRAPPLE * ui;
 
-    // Movement sits under the left thumb, actions under the right.
+    // Movement sits under the left thumb, the rope under the right.
     place('left', left + rm + 6 * ui, bottom - rm);
     place('right', left + rm * 3 + 16 * ui, bottom - rm);
 
-    // Grapple sits above jump under the right thumb. It is the verb the game
-    // is built on, so it gets the largest pad and the easiest reach.
-    place('grapple', right - rg - 6 * ui, bottom - rg - 62 * ui);
-    place('jump', right - ra - 8 * ui, bottom - ra);
+    // Grapple owns the right thumb outright. It is the only action in the game
+    // now, so it sits where the thumb already rests and gets the biggest pad.
+    place('grapple', right - rg - 8 * ui, bottom - rg);
 
     this.draw();
   }
@@ -179,6 +174,7 @@ export class Controls {
       ...this.scene.input.manager.pointers,
     ];
 
+    let changed = false;
     for (const p of this.pads) {
       let down = false;
       for (const ptr of pointers) {
@@ -194,9 +190,13 @@ export class Controls {
         }
       }
       p.pressed = down && !p.down;
+      if (p.down !== down) changed = true;
       p.down = down;
     }
-    this.draw();
+    // Phaser rebuilds a Graphics' geometry on every clear/fill, so redrawing
+    // three pads that have not changed is pure per-frame cost in the one loop
+    // that must stay tight.
+    if (changed) this.draw();
   }
 
   private padDown(id: string): boolean {
@@ -215,14 +215,17 @@ export class Controls {
     if (this.padDown('left') || this.key('A') || this.key('LEFT')) moveX -= 1;
     if (this.padDown('right') || this.key('D') || this.key('RIGHT')) moveX += 1;
 
-    const jumpHeld =
-      this.padDown('jump') || this.key('SPACE') || this.key('W') || this.key('UP');
-    const grapple = this.padDown('grapple') || this.key('E') || this.mouseGrapple;
+    // Space and W now grapple too: with no jump there is nothing else they
+    // could sensibly mean, and a player will try them first.
+    const grapple =
+      this.padDown('grapple') ||
+      this.key('E') ||
+      this.key('SPACE') ||
+      this.key('W') ||
+      this.key('UP') ||
+      this.mouseGrapple;
 
-    const jump = jumpHeld && !this.prevJump;
-    this.prevJump = jumpHeld;
-
-    return { moveX, jump, jumpHeld, grapple };
+    return { moveX, grapple };
   }
 
   /**

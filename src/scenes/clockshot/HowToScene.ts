@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { C, FONT } from '@/clockshot/theme';
-import { SCORE } from '@/shared/config';
+import { SCORE, START_TIME_MS, TIME_GAIN, TIME_LOSS } from '@/shared/config';
 import { Button, fadeTo, layoutOf, text } from '@/clockshot/ui';
 import { TEX, bakeTextures } from '@/clockshot/textures';
 
@@ -46,36 +46,42 @@ export class HowToScene extends Phaser.Scene {
           'The rope pulls in as you swing, so you gain height.',
           'Let go to launch — your speed carries with you.',
           '',
-          'Desktop: A/D move · SPACE jump · E or click to grapple',
+          'Desktop: A/D steer · E, SPACE or click to grapple',
         ].join('\n'),
         icons: [{ key: TEX.anchor, caption: 'anchor' }],
       },
       {
-        title: 'COLLECT TIME',
+        title: 'TIME IS FUEL',
         body: [
-          `Clock  +${SCORE.fragment}s        Golden clock  +${SCORE.goldenClock}s`,
+          `You start with ${START_TIME_MS / 1000} seconds.`,
+          'The clock starts the moment you move, and never stops.',
           '',
-          `Red clocks take ${SCORE.enemyFragment}s off the other team.`,
+          `Clock  +${TIME_GAIN.clock}s        Golden clock  +${TIME_GAIN.golden}s`,
+          `Spikes and enemies  -${TIME_LOSS.hazard}s`,
           '',
-          'Spikes and pits cost you time, never seconds.',
-          'Whatever you collect, you keep.',
+          'Run out and the run is over.',
         ].join('\n'),
         icons: [
-          { key: TEX.fragment, caption: `+${SCORE.fragment}` },
-          { key: TEX.golden, caption: `+${SCORE.goldenClock}` },
-          { key: TEX.enemyFrag, caption: 'steal' },
+          { key: TEX.clock, caption: `+${TIME_GAIN.clock}s` },
+          { key: TEX.golden, caption: `+${TIME_GAIN.golden}s` },
         ],
       },
       {
-        title: 'IT IS ONE SHARED FIGHT',
+        title: 'REACH THE GOAL',
         body: [
-          'Your run lasts 30 seconds.',
-          'Every second you bank is added to your',
-          "team's shared clock for the whole community.",
+          'The green ring is the end of the run.',
+          'Green flags along the way are checkpoints —',
+          'touch one and that is where you restart.',
           '',
-          'Nobody has to be online at the same time.',
-          'The team ahead when the round ends wins it.',
+          'Getting to the goal is the only way to score.',
+          '',
+          `Finish  ${SCORE.goal}`,
+          `Each anchor you used  ${SCORE.anchor}`,
+          `Each second still on your clock  ${SCORE.secondLeft}`,
+          '',
+          'So fly through more of the arena, and arrive early.',
         ].join('\n'),
+        icons: [{ key: TEX.goal, caption: 'goal' }],
       },
     ];
 

@@ -1,28 +1,26 @@
 import Phaser from 'phaser';
-import { C, FONT, hex, teamColor, teamName } from '@/clockshot/theme';
+import { C, FONT, hex } from '@/clockshot/theme';
 import { sfx } from '@/clockshot/sfx';
-import { activityLine, store, formatClock } from '@/clockshot/store';
-import { Button, drawTeamBar, fadeTo, layoutOf, text } from '@/clockshot/ui';
+import { activityLine, formatClock, formatPoints, store } from '@/clockshot/store';
+import { Button, fadeTo, layoutOf, text } from '@/clockshot/ui';
 import { api, NetError } from '@/clockshot/net';
 import { arenaAt } from '@/clockshot/arena';
-import { arenaIndexAt } from '@/shared/config';
+import { arenaIndexAt, START_TIME_MS } from '@/shared/config';
 
 /**
  * Main menu.
  *
- * The shared battle is the headline, not the game's own name: the first thing
- * on screen is who is winning and how long is left, because that is what makes
- * a player want to take a run right now rather than later.
+ * The board is the headline, not the game's own name: the first thing on screen
+ * is the score to beat and how long is left to beat it, because that is what
+ * makes a player take a run right now rather than later.
  */
 export class MenuScene extends Phaser.Scene {
   private bg!: Phaser.GameObjects.Graphics;
-  private bar!: Phaser.GameObjects.Graphics;
   private title!: Phaser.GameObjects.Text;
   private tagline!: Phaser.GameObjects.Text;
-  private redLabel!: Phaser.GameObjects.Text;
-  private blueLabel!: Phaser.GameObjects.Text;
-  private leaderLabel!: Phaser.GameObjects.Text;
-  private roundLabel!: Phaser.GameObjects.Text;
+  private topLabel!: Phaser.GameObjects.Text;
+  private arenaLabel!: Phaser.GameObjects.Text;
+  private windowLabel!: Phaser.GameObjects.Text;
   private prevLabel!: Phaser.GameObjects.Text;
   private youLabel!: Phaser.GameObjects.Text;
   private feedHeading!: Phaser.GameObjects.Text;
@@ -30,7 +28,7 @@ export class MenuScene extends Phaser.Scene {
 
   private playBtn!: Button;
   private howBtn!: Button;
-  private dashBtn!: Button;
+  private boardBtn!: Button;
   private soundBtn!: Button;
 
   private unsubscribe: (() => void) | null = null;
@@ -44,17 +42,22 @@ export class MenuScene extends Phaser.Scene {
   create(): void {
     this.cameras.main.setBackgroundColor(C.bg);
     this.bg = this.add.graphics();
-    this.bar = this.add.graphics();
 
     this.title = text(this, 0, 0, 'CLOCKSHOT', 34, C.gold);
     this.title.setStyle({ fontFamily: FONT, fontStyle: 'bold' });
-    this.tagline = text(this, 0, 0, 'Swing. Shoot. Bank seconds for your team.', 12, C.dim);
+    this.tagline = text(
+      this,
+      0,
+      0,
+      `${START_TIME_MS / 1000} seconds. Swing. Reach the goal.`,
+      12,
+      C.dim,
+    );
 
-    this.redLabel = text(this, 0, 0, 'RED 0s', 15, C.red, 'left');
-    this.blueLabel = text(this, 0, 0, '0s BLUE', 15, C.blue, 'right');
-    this.leaderLabel = text(this, 0, 0, '', 13, C.ink);
-    this.roundLabel = text(this, 0, 0, '', 13, C.dim);
-    this.prevLabel = text(this, 0, 0, '', 11, C.faint);
+    this.topLabel = text(this, 0, 0, '', 17, C.gold);
+    this.arenaLabel = text(this, 0, 0, '', 13, C.cyan);
+    this.windowLabel = text(this, 0, 0, '', 12, C.dim);
+    this.prevLabel = text(this, 0, 0, '', 10.5, C.faint);
     this.youLabel = text(this, 0, 0, '', 12, C.dim);
     this.feedHeading = text(this, 0, 0, 'LATEST', 11, C.cyan, 'left');
     this.feedLabel = text(this, 0, 0, '', 10.5, C.dim, 'left');
@@ -66,13 +69,20 @@ export class MenuScene extends Phaser.Scene {
     this.howBtn = new Button(this, 0, 0, 'HOW TO PLAY', { width: 240, color: C.cyan }, () =>
       fadeTo(this, () => this.scene.start('cs-howto')),
     );
-    this.dashBtn = new Button(this, 0, 0, 'COMMUNITY', { width: 240, color: C.panelEdge }, () =>
-      fadeTo(this, () => this.scene.start('cs-dash')),
+    this.boardBtn = new Button(this, 0, 0, 'LEADERBOARD', { width: 240, color: C.panelEdge }, () =>
+      fadeTo(this, () => this.scene.start('cs-leaderboard')),
     );
-    this.soundBtn = new Button(this, 0, 0, this.soundCaption(), { width: 240, color: C.panelEdge }, () => {
-      sfx.toggleMute();
-      this.soundBtn.setCaption(this.soundCaption());
-    });
+    this.soundBtn = new Button(
+      this,
+      0,
+      0,
+      this.soundCaption(),
+      { width: 240, color: C.panelEdge },
+      () => {
+        sfx.toggleMute();
+        this.soundBtn.setCaption(this.soundCaption());
+      },
+    );
 
     this.relayout();
     this.render();
@@ -80,7 +90,7 @@ export class MenuScene extends Phaser.Scene {
     this.unsubscribe = store.onChange(() => this.render());
     this.scale.on(Phaser.Scale.Events.RESIZE, this.relayout, this);
 
-    // Keep the battle live while the player sits on the menu.
+    // Keep the board live while the player sits on the menu.
     this.poll = this.time.addEvent({
       delay: 12_000,
       loop: true,
@@ -103,17 +113,12 @@ export class MenuScene extends Phaser.Scene {
   /**
    * Starts a run — but only after the server has agreed to one.
    *
-   * The run id and its clock both come from that call, so a player who has no
-   * team, is rate limited, or is not logged in is turned away here rather than
-   * after wasting thirty seconds.
+   * The run id, its seed and its arena all come from that call, so a player who
+   * is rate limited or not logged in is turned away here rather than after
+   * wasting a run.
    */
   private async onPlay(): Promise<void> {
     if (this.starting) return;
-
-    // No detour to the team screen. A player with no side still starts a run
-    // straight away and chooses who gets the seconds when they bank them —
-    // asking for a commitment before showing the game was the single biggest
-    // thing standing between a new player and their first thirty seconds.
     this.starting = true;
     this.playBtn.setCaption('STARTING…').setEnabled(false);
 
@@ -124,12 +129,6 @@ export class MenuScene extends Phaser.Scene {
       this.starting = false;
       this.playBtn.setCaption('PLAY').setEnabled(true);
 
-      if (err instanceof NetError && err.code === 'no_team') {
-        // Only an older server can still say this; the team screen is now a
-        // deliberate visit rather than a gate.
-        fadeTo(this, () => this.scene.start('cs-team'));
-        return;
-      }
       if (err instanceof NetError && err.code === 'rate_limited') {
         this.youLabel.setText(err.message).setColor(hex(C.gold));
         void store.refreshQuietly();
@@ -142,62 +141,55 @@ export class MenuScene extends Phaser.Scene {
     }
   }
 
+  /** Naming the arena is what turns "a window" into a place. */
+  private windowLine(): string {
+    const b = store.board;
+    if (!b) return '';
+    return [
+      `resets in ${formatClock(store.msLeftInWindow())}`,
+      `${b.players} player${b.players === 1 ? '' : 's'}`,
+    ].join('  ·  ');
+  }
+
   private render(): void {
-    const c = store.community;
-    if (!c) return;
+    const b = store.board;
+    if (!b) return;
 
-    this.redLabel.setText(`RED  ${c.banks.red}s`);
-    this.blueLabel.setText(`${c.banks.blue}s  BLUE`);
+    const arena = arenaAt(arenaIndexAt(b.roundIndex));
+    this.arenaLabel.setText(`${arena.name}  ·  ${arena.blurb}`);
 
-    if (c.leader) {
-      this.leaderLabel.setText(`${teamName(c.leader)} TEAM LEADS`).setColor(hex(teamColor(c.leader)));
-    } else {
-      this.leaderLabel.setText('DEAD LEVEL').setColor(hex(C.ink));
-    }
+    this.topLabel.setText(
+      b.topScore === null
+        ? 'NO SCORE YET — BE FIRST'
+        : `TOP  ${formatPoints(b.topScore)}  ·  u/${b.topPlayer}`,
+    );
+    this.windowLabel.setText(this.windowLine());
 
-    this.roundLabel.setText(this.roundLine());
-
-    const prev = c.previous;
+    const prev = b.previous;
     this.prevLabel.setText(
-      prev === null
-        ? 'first round in this community'
-        : prev.draw
-          ? `last round: a draw at ${prev.banks.red}s`
-          : `last round: ${teamName(prev.winner!)} won ${prev.banks[prev.winner!]}s to ${prev.banks[prev.winner === 'red' ? 'blue' : 'red']}s`,
+      prev === null || prev.topScore === null
+        ? 'first board in this community'
+        : `last board: u/${prev.topPlayer} won it with ${formatPoints(prev.topScore)}`,
     );
 
     if (!store.username) {
       this.youLabel.setText('log in to Reddit to play').setColor(hex(C.dim));
       this.playBtn.setCaption('LOG IN TO PLAY').setEnabled(false);
-    } else if (store.team) {
-      this.youLabel
-        .setText(`u/${store.username} · ${teamName(store.team)} · ${store.contribution}s this round`)
-        .setColor(hex(teamColor(store.team)));
-      this.playBtn.setCaption('PLAY').setEnabled(!this.starting);
     } else {
-      this.youLabel.setText(`u/${store.username} · pick a side after your first run`).setColor(hex(C.dim));
+      const rank = store.rank !== null ? `  ·  #${store.rank}` : '';
+      this.youLabel
+        .setText(
+          store.best > 0
+            ? `u/${store.username}  ·  best ${formatPoints(store.best)}${rank}`
+            : `u/${store.username}  ·  no score yet`,
+        )
+        .setColor(hex(store.best > 0 ? C.gold : C.dim));
       this.playBtn.setCaption('PLAY').setEnabled(!this.starting);
     }
 
     // The feed is what turns a menu into a place where other people have been.
     const lines = store.activity.slice(0, 5).map((a) => `· ${activityLine(a)}`);
-    this.feedLabel.setText(
-      lines.length > 0 ? lines.join('\n') : '· Nothing yet this round. Be the first.',
-    );
-
-    this.drawBars();
-  }
-
-  private drawBars(): void {
-    const c = store.community;
-    if (!c) return;
-    const L = layoutOf(this);
-    const w = L.iw - 36 * L.ui;
-    drawTeamBar(this.bar, L.x + 18 * L.ui, this.barY(L), w, 16 * L.ui, c.banks.red, c.banks.blue);
-  }
-
-  private barY(L: ReturnType<typeof layoutOf>): number {
-    return L.y + 96 * L.ui;
+    this.feedLabel.setText(lines.join('\n'));
   }
 
   private relayout(): void {
@@ -205,20 +197,19 @@ export class MenuScene extends Phaser.Scene {
     const g = this.bg;
     g.clear();
 
-    // The community panel, which owns the top of the screen.
-    const panelH = 148 * L.ui;
+    // The board panel, which owns the top of the screen.
+    const panelH = 132 * L.ui;
     g.fillStyle(C.panel, 0.92);
     g.fillRoundedRect(L.x, L.y + 4 * L.ui, L.iw, panelH, 16 * L.ui);
     g.lineStyle(1.5, C.panelEdge, 0.6);
     g.strokeRoundedRect(L.x, L.y + 4 * L.ui, L.iw, panelH, 16 * L.ui);
 
-    this.leaderLabel.setPosition(L.cx, L.y + 30 * L.ui).setFontSize(Math.round(14 * L.ui));
-    this.redLabel.setPosition(L.x + 18 * L.ui, L.y + 66 * L.ui).setFontSize(Math.round(15 * L.ui));
-    this.blueLabel.setPosition(L.x + L.iw - 18 * L.ui, L.y + 66 * L.ui).setFontSize(Math.round(15 * L.ui));
-    this.roundLabel.setPosition(L.cx, L.y + 124 * L.ui).setFontSize(Math.round(12 * L.ui));
-    this.prevLabel.setPosition(L.cx, L.y + 144 * L.ui).setFontSize(Math.round(10.5 * L.ui));
+    this.topLabel.setPosition(L.cx, L.y + 36 * L.ui).setFontSize(Math.round(17 * L.ui));
+    this.arenaLabel.setPosition(L.cx, L.y + 66 * L.ui).setFontSize(Math.round(11.5 * L.ui));
+    this.windowLabel.setPosition(L.cx, L.y + 94 * L.ui).setFontSize(Math.round(12 * L.ui));
+    this.prevLabel.setPosition(L.cx, L.y + 118 * L.ui).setFontSize(Math.round(10.5 * L.ui));
 
-    const titleY = L.y + panelH + 54 * L.ui;
+    const titleY = L.y + panelH + 52 * L.ui;
     this.title.setPosition(L.cx, titleY).setFontSize(Math.round(34 * L.ui));
     this.tagline.setPosition(L.cx, titleY + 28 * L.ui).setFontSize(Math.round(11.5 * L.ui));
     this.youLabel.setPosition(L.cx, titleY + 50 * L.ui).setFontSize(Math.round(11.5 * L.ui));
@@ -252,41 +243,21 @@ export class MenuScene extends Phaser.Scene {
 
     this.soundBtn.setPosition(L.cx, by);
     by -= bh + gap;
-    this.dashBtn.setPosition(L.cx, by);
+    this.boardBtn.setPosition(L.cx, by);
     by -= bh + gap;
     this.howBtn.setPosition(L.cx, by);
     by -= bh + gap;
     this.playBtn.setPosition(L.cx, by);
 
-    for (const b of [this.playBtn, this.howBtn, this.dashBtn, this.soundBtn]) {
+    for (const b of [this.playBtn, this.howBtn, this.boardBtn, this.soundBtn]) {
       b.setSize(bw, bh).setFontSize(16 * L.ui);
     }
-
-    this.drawBars();
-  }
-
-  /**
-   * Naming the arena is what turns "a round" into a place.
-   *
-   * It is derived from the round index, so it costs nothing to show and it is
-   * the same for everyone reading the menu right now.
-   */
-  private roundLine(): string {
-    const c = store.community;
-    if (!c) return '';
-    const arena = arenaAt(arenaIndexAt(c.roundIndex));
-    return [
-      arena.name,
-      `ends in ${formatClock(store.msLeftInRound())}`,
-      `${c.players} player${c.players === 1 ? '' : 's'}`,
-    ].join('  ·  ');
   }
 
   update(): void {
-    const c = store.community;
-    if (!c) return;
-    this.roundLabel.setText(this.roundLine());
-    // The moment a round runs out, pull the new one rather than showing 0:00.
-    if (store.roundStale) void store.refreshQuietly();
+    if (!store.board) return;
+    this.windowLabel.setText(this.windowLine());
+    // The moment a window runs out, pull the new one rather than showing 0:00.
+    if (store.windowStale) void store.refreshQuietly();
   }
 }

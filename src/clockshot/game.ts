@@ -4,8 +4,6 @@ import { GRAVITY } from './tuning';
 import { BootScene } from '@/scenes/clockshot/BootScene';
 import { MenuScene } from '@/scenes/clockshot/MenuScene';
 import { HowToScene } from '@/scenes/clockshot/HowToScene';
-import { TeamScene } from '@/scenes/clockshot/TeamScene';
-import { DashboardScene } from '@/scenes/clockshot/DashboardScene';
 import { PlayScene } from '@/scenes/clockshot/PlayScene';
 import { ResultsScene } from '@/scenes/clockshot/ResultsScene';
 import { LeaderboardScene } from '@/scenes/clockshot/LeaderboardScene';
@@ -36,8 +34,8 @@ export const gameConfig: Phaser.Types.Core.GameConfig = {
     powerPreference: 'high-performance',
   },
   input: {
-    // Move, jump, grapple and fire can all be held at once.
-    activePointers: 5,
+    // Both movement pads and the rope can be held at once.
+    activePointers: 4,
   },
   physics: {
     default: 'arcade',
@@ -51,8 +49,6 @@ export const gameConfig: Phaser.Types.Core.GameConfig = {
     BootScene,
     MenuScene,
     HowToScene,
-    TeamScene,
-    DashboardScene,
     PlayScene,
     ResultsScene,
     LeaderboardScene,

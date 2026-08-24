@@ -2,23 +2,14 @@ import Phaser from 'phaser';
 import { GRAPPLE, HAZARD_IFRAMES_MS, MOVE, PLAYER_SIZE } from './tuning';
 import { TEX } from './textures';
 import type { Anchor } from './arena';
-import type { Team } from '../shared/config';
 
 /** What the player is asking for this frame, from whichever input device. */
 export interface Intent {
   moveX: number;
-  /** True only on the frame the jump began. */
-  jump: boolean;
-  jumpHeld: boolean;
   grapple: boolean;
 }
 
-export const NO_INTENT: Intent = {
-  moveX: 0,
-  jump: false,
-  jumpHeld: false,
-  grapple: false,
-};
+export const NO_INTENT: Intent = { moveX: 0, grapple: false };
 
 /**
  * The player, and the grapple that defines how they move.
@@ -37,24 +28,27 @@ export class Player {
   anchor: Anchor | null = null;
   ropeLength = 0;
 
-  /** Which way the player is facing, for shooting and for the sprite. */
+  /** Which way the player is facing, for the sprite. */
   facing: 1 | -1 = 1;
 
-  private coyoteUntil = 0;
-  private jumpBufferedUntil = 0;
   private grappleReadyAt = 0;
   private invulnerableUntil = 0;
-  private wasGrappleHeld = false;
-  private wasJumpHeld = false;
+
+  /**
+   * Every anchor this run has actually hung from.
+   *
+   * Distinct, not a count of grapples: the score pays per anchor, and paying
+   * per grapple would make swinging back and forth on one hook the best
+   * strategy in the game.
+   */
+  readonly anchorsUsed = new Set<string>();
 
   constructor(
     private readonly scene: Phaser.Scene,
     x: number,
     y: number,
-    team: Team | null,
   ) {
-    const key = team === 'red' ? TEX.playerRed : team === 'blue' ? TEX.playerBlue : TEX.player;
-    this.sprite = scene.physics.add.sprite(x, y, key);
+    this.sprite = scene.physics.add.sprite(x, y, TEX.player);
     this.body = this.sprite.body as Phaser.Physics.Arcade.Body;
 
     this.body.setSize(PLAYER_SIZE.w, PLAYER_SIZE.h);
@@ -120,6 +114,7 @@ export class Player {
 
   attach(anchor: Anchor): void {
     this.anchor = anchor;
+    this.anchorsUsed.add(`${anchor.x},${anchor.y}`);
     const d = Phaser.Math.Distance.Between(this.x, this.y, anchor.x, anchor.y);
     this.ropeLength = Phaser.Math.Clamp(d, GRAPPLE.minRope, GRAPPLE.maxRope);
   }
@@ -207,14 +202,13 @@ export class Player {
     const now = this.scene.time.now;
     const grounded = this.body.blocked.down || this.body.touching.down;
 
-    if (grounded) this.coyoteUntil = now + MOVE.coyoteMs;
-    if (intent.jump) this.jumpBufferedUntil = now + MOVE.bufferMs;
-
-    // --- grapple, edge-triggered on press, held to stay attached ---
-    const pressed = intent.grapple && !this.wasGrappleHeld;
-    this.wasGrappleHeld = intent.grapple;
-
-    if (pressed && !this.attached && now >= this.grappleReadyAt) {
+    // --- grapple: hold to hook, release to let go ---
+    //
+    // Holding *keeps trying* rather than only firing on the press edge. With
+    // the rope as the only action in the game, a player holds the button
+    // through the moment an anchor comes into range and expects to be caught;
+    // an edge-triggered grab silently does nothing and reads as a dead button.
+    if (intent.grapple && !this.attached && now >= this.grappleReadyAt) {
       const target = this.findAnchor(anchors);
       if (target) this.attach(target);
     } else if (!intent.grapple && this.attached) {
@@ -243,29 +237,6 @@ export class Player {
     } else {
       this.body.setAccelerationX(0);
       this.body.setDragX(0);
-    }
-
-    // --- jump ---
-    const canJump = now < this.coyoteUntil && !this.attached;
-    if (now < this.jumpBufferedUntil && canJump) {
-      this.body.velocity.y = MOVE.jumpVelocity;
-      this.jumpBufferedUntil = 0;
-      this.coyoteUntil = 0;
-    }
-    // Variable height: the cut fires once, on the frame the button comes up.
-    // Running it every frame would compound — 0.45^5 is about 0.02 — and wipe
-    // out the upward momentum a grapple release has just earned, which is the
-    // one thing a swing exists to give you.
-    const releasedJump = this.wasJumpHeld && !intent.jumpHeld;
-    this.wasJumpHeld = intent.jumpHeld;
-    if (releasedJump && this.body.velocity.y < 0 && !this.attached) {
-      this.body.velocity.y *= MOVE.cutMultiplier;
-    }
-
-    // Jumping off the rope is a release plus a kick.
-    if (intent.jump && this.attached) {
-      this.release();
-      this.body.velocity.y = Math.min(this.body.velocity.y, MOVE.jumpVelocity * 0.75);
     }
 
     if (this.attached) this.applyRope(dt, intent);

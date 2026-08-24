@@ -13,12 +13,12 @@ import { COMBAT, PLAYER_SIZE } from './tuning';
 
 export const TEX = {
   player: 'cs-player',
-  playerRed: 'cs-player-red',
-  playerBlue: 'cs-player-blue',
   enemy: 'cs-enemy',
-  fragment: 'cs-frag',
+  clock: 'cs-clock',
   golden: 'cs-golden',
-  enemyFrag: 'cs-efrag',
+  goal: 'cs-goal',
+  checkpoint: 'cs-cp',
+  checkpointLit: 'cs-cp-lit',
   anchor: 'cs-anchor',
   spark: 'cs-spark',
 } as const;
@@ -87,8 +87,6 @@ export function bakeTextures(scene: Phaser.Scene): void {
   const ph = h + 12;
 
   bake(scene, TEX.player, pw, ph, (g) => playerBody(g, C.cyan));
-  bake(scene, TEX.playerRed, pw, ph, (g) => playerBody(g, C.red));
-  bake(scene, TEX.playerBlue, pw, ph, (g) => playerBody(g, C.blue));
 
   // Enemy: a hostile clock. Same visual family as the collectibles, opposite
   // colour, so the player never has to learn two unrelated languages.
@@ -111,7 +109,7 @@ export function bakeTextures(scene: Phaser.Scene): void {
     }
   });
 
-  bake(scene, TEX.fragment, 30, 30, (g) => {
+  bake(scene, TEX.clock, 30, 30, (g) => {
     glow(g, 15, 15, 9, C.gold);
     clockFace(g, 15, 15, 7, C.gold, 0x3d2a00);
   });
@@ -134,13 +132,43 @@ export function bakeTextures(scene: Phaser.Scene): void {
     }
   });
 
-  bake(scene, TEX.enemyFrag, 34, 34, (g) => {
-    glow(g, 17, 17, 11, C.danger);
-    clockFace(g, 17, 17, 8, C.danger, 0x2a0d0d);
-    // Reversed rim marks it as time taken from someone else.
-    g.lineStyle(2, C.ink, 0.5);
-    g.strokeCircle(17, 17, 12);
+  // The goal: a ring big enough to spot from across the arena, in the one
+  // colour nothing else in the game uses.
+  bake(scene, TEX.goal, 96, 96, (g) => {
+    const c = 48;
+    glow(g, c, c, 34, C.goal);
+    g.fillStyle(C.goalDeep, 0.9);
+    g.fillCircle(c, c, 30);
+    g.lineStyle(4, C.goal, 1);
+    g.strokeCircle(c, c, 30);
+    g.lineStyle(2, C.goal, 0.6);
+    g.strokeCircle(c, c, 40);
+    // A chequered inner ring, so it reads as a finish line and not a pickup.
+    g.fillStyle(C.goal, 1);
+    for (let i = 0; i < 12; i += 2) {
+      const a0 = (i / 12) * Math.PI * 2;
+      const a1 = ((i + 1) / 12) * Math.PI * 2;
+      g.beginPath();
+      g.arc(c, c, 22, a0, a1, false);
+      g.arc(c, c, 13, a1, a0, true);
+      g.closePath();
+      g.fillPath();
+    }
   });
+
+  // A flag on a post. Two versions, because "have I got this one?" has to be
+  // answerable from across the arena at a glance.
+  const flag = (g: Phaser.GameObjects.Graphics, color: number, lit: boolean): void => {
+    if (lit) glow(g, 26, 30, 20, color);
+    g.lineStyle(4, color, 1);
+    g.lineBetween(16, 12, 16, 56);
+    g.fillStyle(color, lit ? 1 : 0.55);
+    g.fillTriangle(18, 14, 46, 24, 18, 34);
+    g.fillStyle(color, 1);
+    g.fillCircle(16, 58, 5);
+  };
+  bake(scene, TEX.checkpoint, 56, 66, (g) => flag(g, C.checkpoint, false));
+  bake(scene, TEX.checkpointLit, 56, 66, (g) => flag(g, C.checkpointLit, true));
 
   bake(scene, TEX.anchor, 34, 34, (g) => {
     glow(g, 17, 17, 10, C.cyan);

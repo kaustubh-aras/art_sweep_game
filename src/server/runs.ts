@@ -1,14 +1,14 @@
 import { redis } from '@devvit/web/server';
 import { K } from './keys';
 import {
+  MAX_RUN_MS,
   RUN_CAPS,
   RUN_COOLDOWN_MS,
-  RUN_GRACE_EARLY_MS,
   RUN_GRACE_LATE_MS,
-  RUN_MS,
   SCORE,
-  type Team,
-  isTeam,
+  START_TIME_MS,
+  TIME_GAIN,
+  TIME_LOSS,
 } from '../shared/config';
 import type { RunTally } from '../shared/api';
 
@@ -16,7 +16,7 @@ import type { RunTally } from '../shared/api';
  * Run lifecycle and validation.
  *
  * The rule the whole file exists to enforce: the client reports *what it did*,
- * never *what it earned*. Seconds are recomputed here from `SCORE`, every count
+ * never *what it earned*. Points are recomputed here from `SCORE`, every count
  * is capped, and the clock that decides whether a run is still valid is the
  * server's — a client timestamp is never read.
  */
@@ -25,23 +25,14 @@ export interface ActiveRun {
   runId: string;
   startedAt: number;
   roundIndex: number;
-  /**
-   * Null when the run began before the player had picked a side.
-   *
-   * A first-time player takes their run first and chooses who gets the seconds
-   * afterwards, so the team arrives with the submission rather than gating the
-   * start. Nothing about the trust model changes: the choice is still recorded
-   * server-side, and the round lock still applies.
-   */
-  team: Team | null;
   seed: number;
 }
 
-/** TTL for the in-flight run record: the run window plus its late grace. */
-const RUN_TTL_SECONDS = Math.ceil((RUN_MS + RUN_GRACE_LATE_MS + 30_000) / 1000);
+/** TTL for the in-flight run record: the longest possible run plus grace. */
+const RUN_TTL_SECONDS = Math.ceil((MAX_RUN_MS + RUN_GRACE_LATE_MS + 30_000) / 1000);
 
 /** How long a spent run id is remembered, so a replay cannot slip in later. */
-const DONE_TTL_SECONDS = Math.ceil((RUN_MS + RUN_GRACE_LATE_MS + 300_000) / 1000);
+const DONE_TTL_SECONDS = Math.ceil((MAX_RUN_MS + RUN_GRACE_LATE_MS + 300_000) / 1000);
 
 function newRunId(): string {
   const rand = () => Math.floor(Math.random() * 0xffffffff).toString(36);
@@ -59,9 +50,6 @@ export async function readActiveRun(userId: string): Promise<ActiveRun | null> {
     runId: raw.runId,
     startedAt,
     roundIndex,
-    // An empty string is how "no side yet" is stored; anything unrecognised is
-    // treated the same way rather than voiding an otherwise valid run.
-    team: isTeam(raw.team) ? raw.team : null,
     seed: Number.isFinite(seed) ? seed : 1,
   };
 }
@@ -76,18 +64,17 @@ export async function readActiveRun(userId: string): Promise<ActiveRun | null> {
  */
 export async function startRun(
   userId: string,
-  team: Team | null,
   roundIndex: number,
   nowMs: number,
 ): Promise<{ run: ActiveRun; resumed: boolean }> {
   const existing = await readActiveRun(userId);
   if (existing) {
-    const expired = nowMs > existing.startedAt + RUN_MS + RUN_GRACE_LATE_MS;
+    const expired = nowMs > existing.startedAt + MAX_RUN_MS + RUN_GRACE_LATE_MS;
     const spent = await isRunSpent(existing.runId);
     if (!expired && !spent && existing.roundIndex === roundIndex) {
       return { run: existing, resumed: true };
     }
-    // Stale or already banked — clear it so a fresh run can begin.
+    // Stale or already scored — clear it so a fresh run can begin.
     await redis.del(K.activeRun(userId));
   }
 
@@ -95,7 +82,6 @@ export async function startRun(
     runId: newRunId(),
     startedAt: nowMs,
     roundIndex,
-    team,
     seed: Math.floor(Math.random() * 0x7fffffff),
   };
 
@@ -103,7 +89,6 @@ export async function startRun(
     runId: run.runId,
     startedAt: String(run.startedAt),
     roundIndex: String(run.roundIndex),
-    team: run.team ?? '',
     seed: String(run.seed),
   });
   await redis.expire(K.activeRun(userId), RUN_TTL_SECONDS);
@@ -120,7 +105,7 @@ async function isRunSpent(runId: string): Promise<boolean> {
  *
  * `set` with `nx` is the atomic part: of two requests carrying the same run id,
  * only one can create the key, so a double submission — whether from a retry, a
- * double tap, or a replay — can never be banked twice.
+ * double tap, or a replay — can never be scored twice.
  */
 export async function claimRun(runId: string, nowMs: number): Promise<boolean> {
   // Fast path for an obvious replay, before we touch anything.
@@ -177,77 +162,87 @@ function capped(v: unknown, max: number): number {
 /** Coerces whatever arrived on the wire into a tally within the caps. */
 export function sanitizeTally(input: unknown): { tally: RunTally; adjusted: boolean } {
   const raw = (input ?? {}) as Record<string, unknown>;
+
   const tally: RunTally = {
-    fragments: capped(raw.fragments, RUN_CAPS.fragments),
-    largeFragments: capped(raw.largeFragments, RUN_CAPS.largeFragments),
-    goldenClocks: capped(raw.goldenClocks, RUN_CAPS.goldenClocks),
-    enemyFragments: capped(raw.enemyFragments, RUN_CAPS.enemyFragments),
-    enemyKills: capped(raw.enemyKills, RUN_CAPS.enemyKills),
-    hazardHits: capped(raw.hazardHits, RUN_CAPS.hazardHits),
-    falls: capped(raw.falls, RUN_CAPS.falls),
+    // Anything other than a literal `true` is a run that did not finish.
+    reachedGoal: raw.reachedGoal === true,
+    msLeft: capped(raw.msLeft, RUN_CAPS.msLeft),
+    anchorsUsed: capped(raw.anchorsUsed, RUN_CAPS.anchors),
+    clocks: capped(raw.clocks, RUN_CAPS.clocks),
+    goldens: capped(raw.goldens, RUN_CAPS.goldens),
+    hits: capped(raw.hits, RUN_CAPS.hits),
   };
 
-  // "Adjusted" means we did not take the client's word for something — either a
-  // count was out of range, or it was not a number at all.
-  const adjusted = (
-    ['fragments', 'largeFragments', 'goldenClocks', 'enemyFragments', 'enemyKills', 'hazardHits', 'falls'] as const
-  ).some((k) => Math.floor(Number(raw[k]) || 0) !== tally[k]);
+  const counts = ['msLeft', 'anchorsUsed', 'clocks', 'goldens', 'hits'] as const;
+  const adjusted =
+    counts.some((k) => Math.floor(Number(raw[k]) || 0) !== tally[k]) ||
+    (raw.reachedGoal !== undefined && raw.reachedGoal !== tally.reachedGoal);
 
   return { tally, adjusted };
 }
 
 export interface ScoredRun {
-  /** Seconds added to the player's own team. */
-  awarded: number;
-  /** Seconds taken off the opposing team. */
-  stolen: number;
+  points: number;
+  breakdown: { goal: number; anchors: number; time: number };
 }
 
 /**
- * Turns a tally into seconds. This is the only place the conversion happens,
- * and the client's own arithmetic is never consulted.
+ * Turns a tally into points. The only place the conversion happens.
+ *
+ * Not reaching the goal scores nothing at all. The whole run is one question —
+ * can you get there before the clock runs out — and paying for a near miss
+ * would blur it. Runs are short and restarting is instant, so a zero costs a
+ * player about fifteen seconds.
  */
 export function scoreRun(tally: RunTally): ScoredRun {
-  const gained =
-    tally.fragments * SCORE.fragment +
-    tally.largeFragments * SCORE.largeFragment +
-    tally.goldenClocks * SCORE.goldenClock +
-    tally.enemyKills * SCORE.enemyKill;
+  if (!tally.reachedGoal) {
+    return { points: 0, breakdown: { goal: 0, anchors: 0, time: 0 } };
+  }
 
-  // Hazards and falls are still reported — they are useful to look at — but
-  // they cost the player time, not seconds. See the note beside `SCORE`.
-  const awarded = Math.min(gained, RUN_CAPS.contribution);
-  const stolen = Math.min(tally.enemyFragments * SCORE.enemyFragment, RUN_CAPS.stolen);
+  const goal = SCORE.goal;
+  const anchors = tally.anchorsUsed * SCORE.anchor;
+  // Whole seconds only, so the number on the results screen matches the number
+  // the player watched on the HUD.
+  const time = Math.floor(tally.msLeft / 1000) * SCORE.secondLeft;
 
-  return { awarded, stolen };
+  const points = Math.min(goal + anchors + time, RUN_CAPS.points);
+  return { points, breakdown: { goal, anchors, time } };
 }
 
 export type RunRejection =
   | { ok: true }
   | { ok: false; code: 'run_expired' | 'round_changed'; message: string }
   /**
-   * Too early. Kept separate from the rejections above because it is the only
-   * timing failure that is *recoverable*: a late run really is gone, but an
-   * early one is almost always clock skew or a retry racing the clock, and the
-   * right answer is "not yet" rather than "your run is void". The caller must
-   * leave the active run in place when it sees this.
+   * Too early. Kept separate because it is the only timing failure that is
+   * *recoverable*: a late run really is gone, but an early one is almost always
+   * clock skew, and the right answer is "not yet" rather than "your run is
+   * void". The caller must leave the active run in place when it sees this.
    */
   | { ok: false; code: 'too_early'; message: string; retryInMs: number };
 
-/** Checks a run's timing against the server clock alone. */
+/**
+ * Checks a run's timing against the server clock alone.
+ *
+ * There is no fixed run length any more — a run lasts as long as the player can
+ * keep the clock alive — so the only bounds are "at least long enough to have
+ * started" and "not longer than any run could possibly be".
+ */
 export function validateTiming(run: ActiveRun, nowMs: number, roundIndex: number): RunRejection {
   const elapsed = nowMs - run.startedAt;
 
-  if (elapsed < RUN_MS - RUN_GRACE_EARLY_MS) {
+  // A run cannot finish before it has begun. Anything faster than a fraction of
+  // the starting tank did not come from the real game.
+  const floor = 250;
+  if (elapsed < floor) {
     return {
       ok: false,
       code: 'too_early',
       message: 'That run has not finished yet.',
-      retryInMs: RUN_MS - elapsed,
+      retryInMs: floor - elapsed,
     };
   }
 
-  if (elapsed > RUN_MS + RUN_GRACE_LATE_MS) {
+  if (elapsed > MAX_RUN_MS + RUN_GRACE_LATE_MS) {
     return {
       ok: false,
       code: 'run_expired',
@@ -259,9 +254,31 @@ export function validateTiming(run: ActiveRun, nowMs: number, roundIndex: number
     return {
       ok: false,
       code: 'round_changed',
-      message: 'The community round ended while you were playing.',
+      message: 'The leaderboard reset while you were playing.',
     };
   }
 
   return { ok: true };
+}
+
+/**
+ * A last sanity check that the clock the client claims could ever have existed.
+ *
+ * The player starts with `START_TIME_MS` and the only way to gain more is to
+ * collect, so leftover time can never exceed the starting tank plus everything
+ * picked up, less everything the hits took away.
+ *
+ * Note what is deliberately *not* used here: the wall time the run took. The
+ * clock is frozen before the player's first input and again whenever they
+ * pause, so wall-elapsed is always at least clock-elapsed and often far more.
+ * Subtracting it flagged perfectly honest runs as adjusted — including every
+ * run where the player spent a moment reading the screen before moving.
+ * `MAX_RUN_MS` already bounds how long a run may stay open.
+ */
+export function plausibleClock(tally: RunTally): boolean {
+  const gained = tally.clocks * TIME_GAIN.clock + tally.goldens * TIME_GAIN.golden;
+  const lost = tally.hits * TIME_LOSS.hazard;
+  const budget = START_TIME_MS + gained * 1000 - lost * 1000;
+  // A second of slack for frame timing and the trip to the server.
+  return tally.msLeft <= budget + 1000;
 }

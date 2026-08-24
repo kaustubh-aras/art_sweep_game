@@ -1,236 +1,202 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { fakeRedis } from './fakeRedis';
 import {
-  addContribution,
-  addToBank,
-  communityState,
+  bestOf,
+  boardState,
+  bumpRuns,
   ensurePlayer,
-  leaderOf,
   leaderboard,
   noteLeadChange,
-  previousRound,
+  playerCount,
+  previousWindow,
   pushActivity,
   rankOf,
   readActivity,
-  readBanks,
+  recordScore,
+  runsOf,
+  topOf,
 } from '../src/server/community';
-import {
-  ROUND_MS,
-  STARTING_BANK,
-  roundIndexAt,
-  roundWindow,
-} from '../src/shared/config';
+import { ACTIVITY_SIZE, LEADERBOARD_SIZE, ROUND_MS } from '../src/shared/config';
 
 beforeEach(() => fakeRedis.reset());
 
-describe('round derivation', () => {
-  it('tiles the epoch with no gaps or overlaps', () => {
-    const i = roundIndexAt(Date.now());
-    const a = roundWindow(i);
-    const b = roundWindow(i + 1);
-    expect(a.endsAt).toBe(b.startsAt);
-    expect(a.endsAt - a.startsAt).toBe(ROUND_MS);
+const W = 42; // an arbitrary board window
+
+describe('recording a score', () => {
+  it('stores a first score as the player best', async () => {
+    const { best, personalBest } = await recordScore(W, 'alice', 1200);
+    expect(best).toBe(1200);
+    expect(personalBest).toBe(true);
   });
 
-  it('puts a moment in the round that contains it', () => {
-    const i = 12345;
-    const { startsAt, endsAt } = roundWindow(i);
-    expect(roundIndexAt(startsAt)).toBe(i);
-    expect(roundIndexAt(endsAt - 1)).toBe(i);
-    expect(roundIndexAt(endsAt)).toBe(i + 1);
-  });
-});
-
-describe('team banks', () => {
-  it('starts both teams level without any initialization step', async () => {
-    const banks = await readBanks(1);
-    expect(banks).toEqual({ red: STARTING_BANK, blue: STARTING_BANK });
+  it('keeps only the better of two runs', async () => {
+    await recordScore(W, 'alice', 1800);
+    const worse = await recordScore(W, 'alice', 900);
+    expect(worse.best).toBe(1800);
+    expect(worse.personalBest).toBe(false);
+    expect(await bestOf(W, 'alice')).toBe(1800);
   });
 
-  it('adds seconds to the right team only', async () => {
-    await addToBank(1, 'red', 10);
-    expect(await readBanks(1)).toEqual({ red: STARTING_BANK + 10, blue: STARTING_BANK });
+  it('reports a genuine improvement', async () => {
+    await recordScore(W, 'alice', 900);
+    const better = await recordScore(W, 'alice', 1800);
+    expect(better.best).toBe(1800);
+    expect(better.personalBest).toBe(true);
   });
 
-  it('never lets a bank go negative, and reports what was really taken', async () => {
-    const result = await addToBank(1, 'blue', -(STARTING_BANK + 25));
-    expect(result.bank).toBe(0);
-    // Only the seconds that existed could be taken.
-    expect(result.applied).toBe(-STARTING_BANK);
-    expect((await readBanks(1)).blue).toBe(0);
+  it('does not treat an equal score as a new best', async () => {
+    await recordScore(W, 'alice', 1000);
+    expect((await recordScore(W, 'alice', 1000)).personalBest).toBe(false);
   });
 
-  it('stays at zero when drained repeatedly', async () => {
-    await addToBank(1, 'blue', -STARTING_BANK);
-    const second = await addToBank(1, 'blue', -10);
-    expect(second.applied).toBe(0);
-    expect((await readBanks(1)).blue).toBe(0);
+  it('keeps players independent', async () => {
+    await recordScore(W, 'alice', 1500);
+    await recordScore(W, 'bob', 700);
+    expect(await bestOf(W, 'alice')).toBe(1500);
+    expect(await bestOf(W, 'bob')).toBe(700);
   });
 
-  it('survives concurrent writes without losing any of them', async () => {
-    // Twenty simultaneous runs, each banking 3 seconds for red.
-    await Promise.all(Array.from({ length: 20 }, () => addToBank(1, 'red', 3)));
-    expect((await readBanks(1)).red).toBe(STARTING_BANK + 60);
-  });
-
-  it('keeps two teams independent under simultaneous load', async () => {
-    await Promise.all([
-      ...Array.from({ length: 10 }, () => addToBank(1, 'red', 2)),
-      ...Array.from({ length: 10 }, () => addToBank(1, 'blue', 5)),
-    ]);
-    expect(await readBanks(1)).toEqual({
-      red: STARTING_BANK + 20,
-      blue: STARTING_BANK + 50,
-    });
+  it('keeps windows independent', async () => {
+    await recordScore(W, 'alice', 1500);
+    expect(await bestOf(W + 1, 'alice')).toBe(0);
   });
 });
 
-describe('leader', () => {
-  it('reports null when level', () => {
-    expect(leaderOf({ red: 10, blue: 10 })).toBeNull();
+describe('the board', () => {
+  it('is empty before anyone scores', async () => {
+    expect(await leaderboard(W, 'alice')).toEqual([]);
+    expect((await topOf(W)).score).toBeNull();
   });
 
-  it('reports the team ahead', () => {
-    expect(leaderOf({ red: 11, blue: 10 })).toBe('red');
-    expect(leaderOf({ red: 10, blue: 11 })).toBe('blue');
+  it('counts a player who turned up but has not scored', async () => {
+    await ensurePlayer(W, 'alice');
+    expect(await playerCount(W)).toBe(1);
+    // ...but does not list them, because a zero is not a score.
+    expect(await leaderboard(W, 'alice')).toEqual([]);
   });
 
-  it('announces a takeover exactly once', async () => {
-    // First observation establishes a baseline and must not announce.
-    expect(await noteLeadChange(1, 'red')).toBe(false);
-    // Same leader again: still nothing to say.
-    expect(await noteLeadChange(1, 'red')).toBe(false);
-    // A genuine flip announces.
-    expect(await noteLeadChange(1, 'blue')).toBe(true);
-    expect(await noteLeadChange(1, 'blue')).toBe(false);
-  });
-
-  it('does not announce falling into a tie', async () => {
-    await noteLeadChange(1, 'red');
-    expect(await noteLeadChange(1, null)).toBe(false);
-  });
-});
-
-describe('leaderboard', () => {
-  it('ranks by seconds, highest first, and flags the requester', async () => {
-    await addContribution(1, 'alice', 'red', 30);
-    await addContribution(1, 'bob', 'blue', 45);
-    await addContribution(1, 'carol', 'red', 12);
-
-    const rows = await leaderboard(1, 'carol');
-    expect(rows.map((r) => r.username)).toEqual(['bob', 'alice', 'carol']);
+  it('orders by points, highest first', async () => {
+    await recordScore(W, 'alice', 900);
+    await recordScore(W, 'bob', 2400);
+    await recordScore(W, 'cara', 1500);
+    const rows = await leaderboard(W, 'bob');
+    expect(rows.map((r) => r.username)).toEqual(['bob', 'cara', 'alice']);
     expect(rows.map((r) => r.rank)).toEqual([1, 2, 3]);
-    expect(rows.find((r) => r.isYou)?.username).toBe('carol');
-    expect(rows[0]!.team).toBe('blue');
   });
 
-  it('accumulates a player across several runs', async () => {
-    await addContribution(1, 'alice', 'red', 10);
-    await addContribution(1, 'alice', 'red', 7);
-    expect(await rankOf(1, 'alice')).toBe(1);
-    const rows = await leaderboard(1, 'alice');
-    expect(rows[0]!.seconds).toBe(17);
+  it('marks the requesting player so the client can highlight them', async () => {
+    await recordScore(W, 'alice', 900);
+    await recordScore(W, 'bob', 2400);
+    const rows = await leaderboard(W, 'alice');
+    expect(rows.find((r) => r.username === 'alice')?.isYou).toBe(true);
+    expect(rows.find((r) => r.username === 'bob')?.isYou).toBe(false);
   });
 
-  it('returns an empty board for a round nobody has played', async () => {
-    expect(await leaderboard(99, 'alice')).toEqual([]);
-    expect(await rankOf(99, 'alice')).toBeNull();
+  it('reports the top score and who holds it', async () => {
+    await recordScore(W, 'alice', 900);
+    await recordScore(W, 'bob', 2400);
+    expect(await topOf(W)).toEqual({ score: 2400, player: 'bob' });
   });
 
-  it('counts a player who joined but has not scored', async () => {
-    await ensurePlayer(1, 'dave', 'blue');
-    const state = await communityState(1 * ROUND_MS);
-    expect(state.players).toBe(1);
-    expect((await leaderboard(1, 'dave'))[0]!.seconds).toBe(0);
+  it('ranks a player, or says they are unranked', async () => {
+    await recordScore(W, 'alice', 900);
+    await recordScore(W, 'bob', 2400);
+    expect(await rankOf(W, 'bob')).toBe(1);
+    expect(await rankOf(W, 'alice')).toBe(2);
+    expect(await rankOf(W, 'nobody')).toBeNull();
+  });
+
+  it('holds no more than the advertised number of rows', async () => {
+    for (let i = 0; i < LEADERBOARD_SIZE + 10; i++) {
+      await recordScore(W, `p${i}`, 100 + i);
+    }
+    expect((await leaderboard(W, '')).length).toBe(LEADERBOARD_SIZE);
+  });
+});
+
+describe('run counts', () => {
+  it('starts at zero and counts up', async () => {
+    expect(await runsOf(W, 'alice')).toBe(0);
+    expect(await bumpRuns(W, 'alice')).toBe(1);
+    expect(await bumpRuns(W, 'alice')).toBe(2);
+    expect(await runsOf(W, 'alice')).toBe(2);
+  });
+
+  it('counts runs even for a player who never scores', async () => {
+    // Every out-of-time attempt still happened, and the menu says so.
+    await bumpRuns(W, 'alice');
+    expect(await runsOf(W, 'alice')).toBe(1);
+    expect(await bestOf(W, 'alice')).toBe(0);
   });
 });
 
 describe('activity feed', () => {
-  it('returns newest first', async () => {
-    const t = Date.now();
-    await pushActivity(1, { kind: 'added', username: 'a', team: 'red', seconds: 1, at: t });
-    await pushActivity(1, { kind: 'added', username: 'b', team: 'blue', seconds: 2, at: t + 10 });
-    const feed = await readActivity(1);
-    expect(feed[0]!.username).toBe('b');
-    expect(feed[1]!.username).toBe('a');
+  it('returns items newest first', async () => {
+    await pushActivity(W, { kind: 'finished', username: 'alice', points: 900, at: 1000 });
+    await pushActivity(W, { kind: 'best', username: 'bob', points: 2400, at: 2000 });
+    const feed = await readActivity(W);
+    expect(feed[0]?.username).toBe('bob');
+    expect(feed[1]?.username).toBe('alice');
   });
 
-  it('keeps entries distinct even in the same millisecond', async () => {
-    const t = Date.now();
-    await pushActivity(1, { kind: 'added', username: 'a', team: 'red', seconds: 1, at: t });
-    await pushActivity(1, { kind: 'added', username: 'a', team: 'red', seconds: 1, at: t });
-    expect((await readActivity(1)).length).toBe(2);
+  it('keeps two identical items apart', async () => {
+    // Same player, same score, same millisecond: without unique ids these
+    // would collapse into one entry in the sorted set.
+    const a = await pushActivity(W, { kind: 'finished', username: 'a', points: 1, at: 5 });
+    const b = await pushActivity(W, { kind: 'finished', username: 'a', points: 1, at: 5 });
+    expect(a.id).not.toBe(b.id);
+    expect((await readActivity(W)).length).toBe(2);
   });
 
-  it('stays bounded as the round goes on', async () => {
-    const t = Date.now();
-    for (let i = 0; i < 60; i++) {
-      await pushActivity(1, { kind: 'added', username: `u${i}`, team: 'red', seconds: 1, at: t + i });
+  it('stays bounded', async () => {
+    for (let i = 0; i < ACTIVITY_SIZE + 20; i++) {
+      await pushActivity(W, { kind: 'finished', username: `p${i}`, points: i, at: 1000 + i });
     }
-    const feed = await readActivity(1);
-    expect(feed.length).toBeLessThanOrEqual(30);
-    // Trimming must drop the oldest, never the newest.
-    expect(feed[0]!.username).toBe('u59');
-  });
-
-  it('skips a corrupted entry rather than failing the whole feed', async () => {
-    const t = Date.now();
-    await pushActivity(1, { kind: 'added', username: 'good', team: 'red', seconds: 1, at: t });
-    await fakeRedis.zAdd('r:1:activity', { member: 'not json{', score: t + 1 });
-    const feed = await readActivity(1);
-    expect(feed.map((f) => f.username)).toEqual(['good']);
+    expect((await readActivity(W)).length).toBeLessThanOrEqual(ACTIVITY_SIZE);
   });
 });
 
-describe('round transitions', () => {
-  it('reports no previous round before anyone has played one', async () => {
-    expect(await previousRound(5)).toBeNull();
+describe('lead changes', () => {
+  it('stays quiet for the first score of a window', async () => {
+    // Nobody "takes the lead" from an empty board.
+    expect(await noteLeadChange(W, 'alice')).toBe(false);
   });
 
-  it('reports the previous winner once a round has been played', async () => {
-    await addToBank(4, 'red', 30);
-    await ensurePlayer(4, 'alice', 'red');
-    const prev = await previousRound(5);
-    expect(prev?.winner).toBe('red');
-    expect(prev?.draw).toBe(false);
-    expect(prev?.banks.red).toBe(STARTING_BANK + 30);
-  });
-
-  it('reports a draw when a played round ended level', async () => {
-    await ensurePlayer(4, 'alice', 'red');
-    await addToBank(4, 'red', 10);
-    await addToBank(4, 'blue', 10);
-    const prev = await previousRound(5);
-    expect(prev?.draw).toBe(true);
-    expect(prev?.winner).toBeNull();
-  });
-
-  it('starts a new round clean while the old one keeps its totals', async () => {
-    await addToBank(4, 'red', 40);
-    await addContribution(4, 'alice', 'red', 40);
-
-    // The next round shares no state with the last.
-    expect(await readBanks(5)).toEqual({ red: STARTING_BANK, blue: STARTING_BANK });
-    expect(await leaderboard(5, 'alice')).toEqual([]);
-    // ...and the old round is still intact for the "previous winner" panel.
-    expect((await readBanks(4)).red).toBe(STARTING_BANK + 40);
-  });
-
-  it('sets an expiry on round keys so old rounds clean themselves up', async () => {
-    await ensurePlayer(7, 'alice', 'red');
-    expect(fakeRedis.ttlOf('r:7:players')).toBeGreaterThan(Date.now());
+  it('announces a genuine takeover exactly once', async () => {
+    await noteLeadChange(W, 'alice');
+    expect(await noteLeadChange(W, 'bob')).toBe(true);
+    expect(await noteLeadChange(W, 'bob')).toBe(false);
   });
 });
 
-describe('community state', () => {
-  it('describes the round containing the given moment', async () => {
-    const now = 9 * ROUND_MS + 1234;
-    const state = await communityState(now);
-    expect(state.roundIndex).toBe(9);
-    expect(state.startsAt).toBe(9 * ROUND_MS);
-    expect(state.endsAt).toBe(10 * ROUND_MS);
+describe('window assembly', () => {
+  it('derives the window from the wall clock alone', async () => {
+    const now = 7 * ROUND_MS + 1234;
+    const state = await boardState(now);
+    expect(state.roundIndex).toBe(7);
+    expect(state.startsAt).toBe(7 * ROUND_MS);
+    expect(state.endsAt).toBe(8 * ROUND_MS);
     expect(state.now).toBe(now);
-    expect(state.banks).toEqual({ red: STARTING_BANK, blue: STARTING_BANK });
-    expect(state.leader).toBeNull();
+  });
+
+  it('carries the top score', async () => {
+    const now = 7 * ROUND_MS;
+    await recordScore(7, 'alice', 3300);
+    const state = await boardState(now);
+    expect(state.topScore).toBe(3300);
+    expect(state.topPlayer).toBe('alice');
+  });
+
+  it('reports nothing for a previous window nobody played', async () => {
+    expect(await previousWindow(W)).toBeNull();
+  });
+
+  it('reports the winner of the previous window', async () => {
+    await recordScore(W - 1, 'bob', 1900);
+    expect(await previousWindow(W)).toEqual({
+      roundIndex: W - 1,
+      topScore: 1900,
+      topPlayer: 'bob',
+    });
   });
 });

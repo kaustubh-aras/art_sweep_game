@@ -1,13 +1,60 @@
-# Clockshot — Community Time War
+# Clockshot — Swing Against the Clock
 
-A Reddit Devvit Web game built with Phaser 3 for the ScoreSpace × Reddit game jam.
+A Reddit Devvit Web game built with Phaser 3.
 
-Pick **Red** or **Blue**. Take a 30-second grappling run through a single arena.
-Every second you bank goes into your team's **shared clock** for the whole
-subreddit. Whichever team is ahead when the community round ends wins it — for
-everyone, whether or not they were online.
+You start with **ten seconds**. The clock drains the moment you move, and the
+only way to keep going is to swing through the clock pickups scattered across
+the arena. **Reach the goal before it hits zero.**
+
+There is no team, no side to pick, and nothing to lose to another player. Just
+you, a rope, and a clock you are always running down.
 
 ---
+
+## How you score
+
+| | |
+|---|---|
+| Reaching the goal | **500** |
+| Each distinct anchor you swung from | **25** |
+| Each whole second still on your clock | **100** |
+
+Not reaching the goal scores nothing at all — the run is one question, and a
+near miss is still a miss.
+
+Two things follow from that table, and they pull against each other: swinging
+through *more* of the arena pays, but so does arriving *early*. The best runs
+take the long way round and still get there with time in hand.
+
+Anchors are counted **distinct**, so swinging back and forth on one hook earns
+nothing after the first grab.
+
+## Time
+
+| | |
+|---|---|
+| Starting clock | 10 s |
+| Clock pickup | **+2 s** |
+| Golden clock | **+5 s** |
+| Spikes or an enemy | **−2 s** |
+
+The clock is frozen until your first input, and it stops while paused — it is
+your fuel, not a countdown you are racing.
+
+## Checkpoints, and dying
+
+Run out of time and you go **straight back in** — no results screen, no button
+to press. A failed run scores nothing, so there is nothing to read and nothing
+to post; the only thing standing between you and the retry would be a screen.
+
+Green flags along the route are **checkpoints**. Touch one and that is where you
+restart, with the clock it recorded at that moment (never less than 5s, so you
+can never land in an unwinnable loop). Your anchors and everything you collected
+carry across, because a restart resumes the same run rather than starting a new
+one.
+
+A checkpoint arms **once**. Re-touching it does nothing — otherwise the best
+play would be to build a fat clock, walk back, re-arm, and die on purpose.
 
 ## Theme interpretation — "Timers"
 
@@ -45,25 +92,24 @@ what the next person sees when they open the post.
 
 ## Controls
 
-**Mobile** — four large touch pads (all comfortably above the 44 px minimum):
+**Mobile** — three large touch pads (all comfortably above the 44 px minimum):
 
 | Pad | Action |
 |---|---|
-| `<` `>` | move left / right |
-| `JUMP` | jump (variable height — release early to hop) |
+| `<` `>` | steer: walk on the ground, pump the swing in the air |
 | `GRAPPLE` | hold to hook the nearest anchor above you; release to launch |
 
 **Desktop**
 
 | Key | Action |
 |---|---|
-| `A` / `D` or `←` / `→` | move |
-| `Space` / `W` / `↑` | jump |
-| `E` or either mouse button | grapple |
+| `A` / `D` or `←` / `→` | steer |
+| `E`, `Space`, `W` or either mouse button | grapple |
 | `Esc` or `P` | pause |
 
-There is no weapon. Enemies are obstacles to swing past, not targets — the
-grapple is the one verb worth learning, and it gets the screen to itself.
+There is no jump and no weapon. The rope is the only verb, so it gets the
+screen to itself — and holding GRAPPLE keeps trying, so an anchor is caught the
+moment it comes into range.
 
 The grapple auto-targets: the anchor it would take is always highlighted, so
 aiming is never a guess. The rope shortens while held, so a swing gains height

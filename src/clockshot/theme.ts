@@ -1,7 +1,5 @@
-import type { Team } from '../shared/config';
-
 /**
- * Clockshot's visual identity: a dark instrument panel, two team signals, and
+ * Clockshot's visual identity: a dark instrument panel, cyan for the rope, and
  * gold for time itself. Every colour the game draws comes from here so the
  * whole thing reads as one object rather than a pile of separate scenes.
  */
@@ -17,10 +15,6 @@ export const C = {
   dim: 0x8497b5,
   faint: 0x475777,
 
-  red: 0xff3b5c,
-  redDeep: 0x7a1428,
-  blue: 0x2fa3ff,
-  blueDeep: 0x0d3f6b,
 
   /** Time itself. Collectibles, the run clock, anything that counts. */
   gold: 0xffc63d,
@@ -33,6 +27,14 @@ export const C = {
   danger: 0xff5a3d,
   good: 0x3dffa0,
 
+  /** The goal. The one thing in the arena that ends the run. */
+  goal: 0x3dffa0,
+  goalDeep: 0x0b4a2c,
+
+  /** Checkpoints: dim until touched, then lit in the goal's own green. */
+  checkpoint: 0x2a3a5c,
+  checkpointLit: 0x3dffa0,
+
   platform: 0x27395c,
   platformTop: 0x3a557f,
 } as const;
@@ -43,8 +45,6 @@ export const CSS = {
   dim: '#8497b5',
   gold: '#ffc63d',
   cyan: '#3df0ff',
-  red: '#ff3b5c',
-  blue: '#2fa3ff',
 } as const;
 
 export const FONT = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
@@ -52,16 +52,4 @@ export const FONT = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
 /** Hex string form, for Phaser text styles which take CSS colours. */
 export function hex(n: number): string {
   return `#${n.toString(16).padStart(6, '0')}`;
-}
-
-export function teamColor(team: Team): number {
-  return team === 'red' ? C.red : C.blue;
-}
-
-export function teamDeep(team: Team): number {
-  return team === 'red' ? C.redDeep : C.blueDeep;
-}
-
-export function teamName(team: Team): string {
-  return team === 'red' ? 'RED' : 'BLUE';
 }

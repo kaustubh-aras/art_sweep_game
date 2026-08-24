@@ -12,25 +12,22 @@
 /* -------------------------------------------------------------------------- */
 
 /**
- * Tune these three. Everything below them is arithmetic.
+ * Tune these two. Gravity falls out of them.
  *
- * Gravity and jump velocity are not independent knobs — they are two views of
- * the same arc, and picking them by hand means every retune is a guess followed
- * by a playtest. Saying "the jump clears 128px and covers 264px at run speed"
- * describes something you can actually look at on screen and check against the
- * arena, and the numbers that produce it fall out.
+ * There is no jump button any more, but gravity still has to be *some* number,
+ * and picking it by hand means it has no relationship to anything you can see.
+ * So it is still expressed as a fall: an arc `FALL_HEIGHT` tall covers
+ * `FALL_RANGE` of ground at run speed. That is a shape you can hold against the
+ * arena and check, and it is what decides how a swing release feels.
  *
  * All distances are world pixels, which is what the arena in `arena.ts` is
  * authored in. For reference: the player is 38px tall and a platform is 24-28px.
  */
 const RUN_SPEED = 320;
-/** Peak height of a full-hold jump. Roughly three and a bit player-heights. */
-const JUMP_APEX = 128;
-/** Horizontal distance covered across the whole arc while running flat out. */
-const JUMP_RANGE = 264;
+const FALL_HEIGHT = 128;
+const FALL_RANGE = 264;
 
-/** Time from leaving the ground to the top of the arc. */
-const T_APEX = JUMP_RANGE / 2 / RUN_SPEED;
+const T_APEX = FALL_RANGE / 2 / RUN_SPEED;
 
 /**
  * Downward acceleration, in px/s^2.
@@ -38,27 +35,21 @@ const T_APEX = JUMP_RANGE / 2 / RUN_SPEED;
  * Also handed to Arcade Physics in `game.ts`, so it is the gravity for
  * everything in the world, not just the player.
  */
-export const GRAVITY = (2 * JUMP_APEX) / (T_APEX * T_APEX);
-
-/** Upward launch speed that reaches exactly `JUMP_APEX` under `GRAVITY`. */
-const JUMP_V = (2 * JUMP_APEX) / T_APEX;
+export const GRAVITY = (2 * FALL_HEIGHT) / (T_APEX * T_APEX);
 
 export const MOVE = {
   /** Ground run speed. */
   speed: RUN_SPEED,
   /** How fast the player reaches full speed on the ground, and in the air. */
-  groundAccel: 2600,
-  airAccel: 1200,
+  groundAccel: 3200,
+  /**
+   * Air steering. Raised with the ground figure: after a release you are
+   * airborne almost all the time, so this — not `groundAccel` — is what most
+   * of the game's steering actually feels like.
+   */
+  airAccel: 1900,
   groundDrag: 1900,
   airDrag: 260,
-  /** Negative because screen y grows downward. */
-  jumpVelocity: -JUMP_V,
-  /** Jump still fires this long after walking off an edge. */
-  coyoteMs: 110,
-  /** A jump pressed this long before landing still fires on touchdown. */
-  bufferMs: 130,
-  /** Releasing jump early cuts the rise, for a variable-height jump. */
-  cutMultiplier: 0.45,
 } as const;
 
 export const GRAPPLE = {
@@ -73,7 +64,17 @@ export const GRAPPLE = {
   swingAccel: 1500,
   /** Speed added along the current heading when the rope is let go. */
   releaseBoost: 130,
-  cooldownMs: 220,
+  /**
+   * Dead time after letting go before the rope can be thrown again.
+   *
+   * This was 220ms — about thirteen frames — from when the grapple was one of
+   * five inputs and spamming it needed rate limiting. With the rope as the only
+   * action in the game that is simply a button that does not work, and it is
+   * the single largest source of the "input lag" this game had. 60ms is short
+   * enough to feel immediate and long enough that a release cannot re-attach on
+   * the very next frame.
+   */
+  cooldownMs: 60,
   /** Hard ceiling on speed, so the pendulum can never go unstable. */
   maxSpeed: 1350,
 } as const;
@@ -95,5 +96,11 @@ export const PLAYER_SIZE = { w: 26, h: 38 } as const;
 /** How long the player is invulnerable after taking a hazard hit. */
 export const HAZARD_IFRAMES_MS = 900;
 
-/** The run clock turns urgent at this point. */
-export const WARNING_MS = 10_000;
+/**
+ * The clock turns urgent below this.
+ *
+ * It used to be 10s, which was fine when a run was a fixed 30 seconds. The tank
+ * is now 10s to start with, so that threshold painted the ring red for the
+ * whole run and the warning meant nothing. Three seconds is about one swing.
+ */
+export const WARNING_MS = 3_000;

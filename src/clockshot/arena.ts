@@ -35,11 +35,11 @@ export interface Patrol {
 /**
  * Two rewards, not three.
  *
- * `fragment` is the bread of the arena and `golden` is the one detour worth
- * breaking your line for. A middle tier only ever read as "a slightly bigger
- * clock", which is a distinction with no decision attached to it.
+ * Both put seconds back on the clock: `clock` is the bread of the arena and
+ * `golden` is the one detour worth breaking your line for. There is nothing
+ * else to pick up, because there is nothing else time can be spent on.
  */
-export type PickupKind = 'fragment' | 'golden' | 'enemy';
+export type PickupKind = 'clock' | 'golden';
 
 export interface Pickup {
   x: number;
@@ -64,14 +64,30 @@ export interface Arena {
   /** Somewhere safe to come back to after a fall. */
   respawns: readonly Anchor[];
   spawn: Anchor;
+  /**
+   * Safety net, laid along the route between spawn and goal.
+   *
+   * Each one arms the first time it is touched, and only the first time: it
+   * records where you were and what your clock read at that instant, and an
+   * out-of-time restart puts you back exactly there. Re-touching does nothing,
+   * which is what stops a player topping a checkpoint up with a fatter clock
+   * and then dying on purpose to keep it.
+   */
+  checkpoints: readonly Anchor[];
+  /**
+   * Where the run ends.
+   *
+   * Deliberately the far side of the arena from `spawn`: the whole run is the
+   * journey between these two points, and everything else is what you pick up
+   * on the way.
+   */
+  goal: Anchor;
   /** Fragment trails, laid along the routes worth taking. */
   trails: readonly (readonly Anchor[])[];
   /** Fragments slightly off the safe line: a small detour, never a new rule. */
   offLine: readonly Anchor[];
   /** Candidate spots for the one golden clock. */
   golden: readonly Anchor[];
-  /** Where a steal costs something to reach. */
-  enemy: readonly Anchor[];
   patrols: readonly Patrol[];
 }
 
@@ -163,6 +179,15 @@ const GANTRY: Arena = {
   ],
 
   spawn: { x: 160, y: 1300 },
+  // The high right perch: no way there but a swing.
+  goal: { x: 1630, y: 520 },
+  checkpoints: [
+    // All clear of the spike strips: you restart *standing* on these, so a
+    // checkpoint beside a hazard would take the clock straight back off you.
+    { x: 800, y: 1320 },
+    { x: 980, y: 1050 },
+    { x: 1560, y: 1090 },
+  ],
 
   trails: [
     // The opening. Flat ground, no hazard, five clocks in a row: the first thing
@@ -229,17 +254,6 @@ const GANTRY: Arena = {
     { x: 900, y: 210 },
     { x: 1210, y: 300 },
     { x: 620, y: 330 },
-  ],
-
-  enemy: [
-    // Deep in the arena but never *inside* a spike strip. A steal should be a
-    // decision, not a guaranteed hit you cannot collect without.
-    { x: 430, y: 1330 },
-    { x: 1050, y: 1330 },
-    { x: 1710, y: 1330 },
-    { x: 1230, y: 340 },
-    { x: 1600, y: 520 },
-    { x: 145, y: 400 },
   ],
 
   patrols: [
@@ -320,6 +334,13 @@ const WELL: Arena = {
   ],
 
   spawn: { x: 120, y: 2020 },
+  // The crown, at the very top of the shaft.
+  goal: { x: 530, y: 240 },
+  checkpoints: [
+    { x: 820, y: 1690 },
+    { x: 770, y: 1370 },
+    { x: 850, y: 730 },
+  ],
 
   trails: [
     // The opening, along the floor and up to the first ledge.
@@ -364,15 +385,6 @@ const WELL: Arena = {
     { x: 470, y: 230 },
     { x: 590, y: 230 },
     { x: 530, y: 130 },
-  ],
-
-  enemy: [
-    { x: 420, y: 2040 },
-    { x: 830, y: 2040 },
-    { x: 950, y: 1080 },
-    { x: 90, y: 1060 },
-    { x: 400, y: 400 },
-    { x: 660, y: 400 },
   ],
 
   patrols: [
@@ -459,6 +471,12 @@ const SPAN: Arena = {
   ],
 
   spawn: { x: 90, y: 720 },
+  // The far ground, all the way across the chasm.
+  goal: { x: 2400, y: 720 },
+  checkpoints: [
+    { x: 830, y: 670 },
+    { x: 1470, y: 670 },
+  ],
 
   trails: [
     // The opening, on the safe half of the left ground.
@@ -512,15 +530,6 @@ const SPAN: Arena = {
     { x: 1300, y: 90 },
     { x: 940, y: 90 },
     { x: 1620, y: 100 },
-  ],
-
-  enemy: [
-    { x: 420, y: 730 },
-    { x: 2120, y: 730 },
-    { x: 1150, y: 590 },
-    { x: 1790, y: 570 },
-    { x: 620, y: 370 },
-    { x: 2480, y: 730 },
   ],
 
   patrols: [
@@ -578,22 +587,16 @@ export function buildLayout(arena: Arena, seed: number): ArenaLayout {
   const pickups: Pickup[] = [];
 
   for (const trail of arena.trails) {
-    for (const p of trail) pickups.push({ x: p.x, y: p.y, kind: 'fragment' });
+    for (const p of trail) pickups.push({ x: p.x, y: p.y, kind: 'clock' });
   }
 
   for (const slot of arena.offLine) {
-    if (rand() < 0.75) pickups.push({ ...slot, kind: 'fragment' });
+    if (rand() < 0.75) pickups.push({ ...slot, kind: 'clock' });
   }
 
   // One golden clock per run, always worth the detour.
   const golden = arena.golden[Math.floor(rand() * arena.golden.length)] ?? arena.golden[0]!;
   pickups.push({ ...golden, kind: 'golden' });
-
-  // Enemy fragments — the ones that steal — are placed where they cost
-  // something to reach, so stealing is a decision rather than a freebie.
-  for (const slot of arena.enemy) {
-    if (rand() < 0.7) pickups.push({ ...slot, kind: 'enemy' });
-  }
 
   const patrols = arena.patrols.filter(() => rand() < 0.88).map((p) => ({ ...p }));
 

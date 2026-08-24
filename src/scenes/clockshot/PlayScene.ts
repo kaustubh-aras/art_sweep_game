@@ -9,15 +9,21 @@ import {
   type PickupKind,
   type Rect,
 } from '@/clockshot/arena';
-import { C, FONT, hex, teamColor } from '@/clockshot/theme';
+import { C, FONT, hex } from '@/clockshot/theme';
 import { GRAVITY, WARNING_MS } from '@/clockshot/tuning';
 import { TEX, bakeTextures } from '@/clockshot/textures';
 import { Controls } from '@/clockshot/controls';
-import { NO_INTENT, Player } from '@/clockshot/player';
+import { Player } from '@/clockshot/player';
 import { sfx } from '@/clockshot/sfx';
 import { store } from '@/clockshot/store';
 import { layoutOf } from '@/clockshot/ui';
-import { RUN_MS, SCORE, type Team } from '@/shared/config';
+import {
+  CHECKPOINT_MIN_MS,
+  MAX_RUN_MS,
+  START_TIME_MS,
+  TIME_GAIN,
+  TIME_LOSS,
+} from '@/shared/config';
 import { EMPTY_TALLY, type RunStartResponse, type RunTally } from '@/shared/api';
 
 interface EnemyData {
@@ -28,6 +34,24 @@ interface EnemyData {
 }
 
 type EnemySprite = Phaser.Physics.Arcade.Sprite & { cs: EnemyData };
+type CheckpointSprite = Phaser.Physics.Arcade.Sprite & { index: number };
+
+/**
+ * What survives an out-of-time restart.
+ *
+ * A restart is not a new run — it is the same attempt resumed from the last
+ * checkpoint — so the things the score is made of have to carry across, or a
+ * player would be quietly robbed of every anchor they had already swung from.
+ */
+interface Resume {
+  /** Indices of every checkpoint already armed, and where to come back to. */
+  armed: number[];
+  at: { x: number; y: number } | null;
+  /** The clock recorded when that checkpoint was first touched. */
+  timeMs: number;
+  anchors: string[];
+  tally: RunTally;
+}
 type PickupSprite = Phaser.Physics.Arcade.Sprite & { kind: PickupKind; taken: boolean };
 
 /**
@@ -41,11 +65,29 @@ type PickupSprite = Phaser.Physics.Arcade.Sprite & { kind: PickupKind; taken: bo
  */
 export class PlayScene extends Phaser.Scene {
   private run!: RunStartResponse;
-  /** Null on a first run: the side is chosen on the results screen. */
-  private team!: Team | null;
-  /** The place this round is played in. Chosen by the server, drawn here. */
+  /** The place this window is played in. Chosen by the server, drawn here. */
   private arena!: Arena;
   private killY = 0;
+
+  /**
+   * The clock, in milliseconds. This *is* the run.
+   *
+   * It is frozen until the player first moves, then drains in real time. Clock
+   * pickups add to it and hits take from it, so a good run lasts longer than a
+   * bad one — the opposite of the fixed timer this replaced.
+   */
+  private timeMs = START_TIME_MS;
+  private started = false;
+  /** Last anchor count painted, so the HUD only redraws when it changes. */
+  private shownAnchors = -1;
+  private goal!: Phaser.Physics.Arcade.Sprite;
+
+  private checkpoints!: Phaser.Physics.Arcade.Group;
+  /** Checkpoints armed so far this run, and the one to restart from. */
+  private armed = new Set<number>();
+  private resumeAt: { x: number; y: number } | null = null;
+  private resumeTimeMs = START_TIME_MS;
+  private carriedAnchors: string[] = [];
 
   private player!: Player;
   private controls!: Controls;
@@ -59,8 +101,6 @@ export class PlayScene extends Phaser.Scene {
   private particles!: Phaser.GameObjects.Particles.ParticleEmitter;
 
   private tally: RunTally = { ...EMPTY_TALLY };
-  private collected = 0;
-  private stolen = 0;
   private streak = 0;
   private finished = false;
   private lastTickSecond = -1;
@@ -86,14 +126,21 @@ export class PlayScene extends Phaser.Scene {
     super('cs-play');
   }
 
-  init(data: { run: RunStartResponse }): void {
+  init(data: { run: RunStartResponse; resume?: Resume }): void {
     this.run = data.run;
-    this.team = data.run.team;
     this.arena = arenaAt(data.run.arenaIndex);
     this.killY = killYOf(this.arena);
-    this.tally = { ...EMPTY_TALLY };
-    this.collected = 0;
-    this.stolen = 0;
+
+    const r = data.resume;
+    this.tally = r ? { ...r.tally } : { ...EMPTY_TALLY };
+    this.armed = new Set(r?.armed ?? []);
+    this.resumeAt = r?.at ?? null;
+    this.carriedAnchors = r?.anchors ?? [];
+    this.resumeTimeMs = r ? Math.max(r.timeMs, CHECKPOINT_MIN_MS) : data.run.startTimeMs || START_TIME_MS;
+
+    this.timeMs = this.resumeTimeMs;
+    this.started = false;
+    this.shownAnchors = -1;
     this.streak = 0;
     this.finished = false;
     this.lastTickSecond = -1;
@@ -122,10 +169,15 @@ export class PlayScene extends Phaser.Scene {
 
     this.rope = this.add.graphics().setDepth(18);
 
-    this.player = new Player(this, this.arena.spawn.x, this.arena.spawn.y, this.team);
+    const from = this.resumeAt ?? this.arena.spawn;
+    this.player = new Player(this, from.x, from.y);
+    // Anchors already swung from stay credited: this is the same run.
+    for (const key of this.carriedAnchors) this.player.anchorsUsed.add(key);
     this.physics.add.collider(this.player.sprite, this.platforms);
 
     this.buildEnemies(layout.patrols);
+    this.buildGoal();
+    this.buildCheckpoints();
     this.buildParticles();
 
     this.physics.add.overlap(this.player.sprite, this.pickups, (_p, obj) =>
@@ -133,11 +185,18 @@ export class PlayScene extends Phaser.Scene {
     );
     this.physics.add.overlap(this.player.sprite, this.hazards, () => this.onHazard());
     this.physics.add.overlap(this.player.sprite, this.enemies, () => this.onHazard());
+    this.physics.add.overlap(this.player.sprite, this.goal, () => this.onGoal());
+    this.physics.add.overlap(this.player.sprite, this.checkpoints, (_p, c) =>
+      this.onCheckpoint(c as CheckpointSprite),
+    );
 
-    this.cameras.main.startFollow(this.player.sprite, true, 0.11, 0.11);
+    // A loose camera reads as input lag even when the input is instant: you
+    // move, and the world takes a beat to agree. 0.11 was well behind a swing.
+    this.cameras.main.startFollow(this.player.sprite, true, 0.2, 0.2);
 
     this.controls = new Controls(this, () => this.pause());
     this.buildHud();
+    this.updateHudText();
     this.splitCameras();
     this.relayout();
 
@@ -157,10 +216,9 @@ export class PlayScene extends Phaser.Scene {
     for (let y = 0; y <= height; y += 120) g.lineBetween(0, y, width, y);
     g.setScrollFactor(0.35);
 
-    // A horizon glow in the team's colour keeps whose fight this is on screen.
-    // A player who has not chosen yet gets the neutral rope colour instead.
+    // A horizon glow, just to give the void a floor to sit against.
     const glow = this.add.graphics().setDepth(-9).setScrollFactor(0.5);
-    glow.fillStyle(this.team ? teamColor(this.team) : C.cyan, 0.05);
+    glow.fillStyle(C.cyan, 0.05);
     glow.fillRect(0, height - 420, width, 420);
   }
 
@@ -218,9 +276,8 @@ export class PlayScene extends Phaser.Scene {
     this.pickups = this.physics.add.group({ allowGravity: false, immovable: true });
 
     const texFor: Record<PickupKind, string> = {
-      fragment: TEX.fragment,
+      clock: TEX.clock,
       golden: TEX.golden,
-      enemy: TEX.enemyFrag,
     };
 
     for (const p of list) {
@@ -254,6 +311,57 @@ export class PlayScene extends Phaser.Scene {
       e.cs = { from: p.from, to: p.to, speed: p.speed, dir: 1 };
       e.setVelocityX(p.speed);
     }
+  }
+
+  /** The goal, and the only thing in the arena that ends a run well. */
+  private buildGoal(): void {
+    const { x, y } = this.arena.goal;
+    this.goal = this.physics.add.sprite(x, y, TEX.goal).setDepth(11);
+    const body = this.goal.body as Phaser.Physics.Arcade.Body;
+    body.setAllowGravity(false);
+    body.setImmovable(true);
+  }
+
+  private buildCheckpoints(): void {
+    this.checkpoints = this.physics.add.group({ allowGravity: false, immovable: true });
+    this.arena.checkpoints.forEach((c, i) => {
+      const lit = this.armed.has(i);
+      const s = this.checkpoints.create(
+        c.x,
+        c.y,
+        lit ? TEX.checkpointLit : TEX.checkpoint,
+      ) as CheckpointSprite;
+      s.index = i;
+      s.setDepth(9);
+      (s.body as Phaser.Physics.Arcade.Body).setAllowGravity(false);
+    });
+  }
+
+  /**
+   * Arms a checkpoint, once and only once.
+   *
+   * Re-touching is deliberately ignored. If a checkpoint took your *current*
+   * clock every time you passed it, the best play would be to collect a fat
+   * clock, walk back, re-arm, and die on purpose — which is the exact opposite
+   * of what a safety net is for.
+   */
+  private onCheckpoint(c: CheckpointSprite): void {
+    if (this.finished || this.armed.has(c.index)) return;
+    this.armed.add(c.index);
+    this.resumeAt = { x: c.x, y: c.y - 30 };
+    this.resumeTimeMs = Math.max(this.timeMs, CHECKPOINT_MIN_MS);
+
+    c.setTexture(TEX.checkpointLit);
+    sfx.collect(1);
+    this.burst(c.x, c.y, C.goal, 14);
+    this.flashMessage('CHECKPOINT', C.goal);
+  }
+
+  /** A slow breath, so the goal reads as alive from across the arena. */
+  private pulseGoal(): void {
+    const t = this.time.now / 1000;
+    this.goal.setScale(1 + Math.sin(t * 2.2) * 0.05);
+    this.goal.setAngle(Math.sin(t * 0.8) * 6);
   }
 
   private buildParticles(): void {
@@ -347,7 +455,9 @@ export class PlayScene extends Phaser.Scene {
     // of a desktop, because a game unit is a device pixel.
     const zoom = Phaser.Math.Clamp(Math.min(L.w / 520, L.h / 900), 1, 2.2);
     this.cameras.main.setZoom(zoom);
-    this.cameras.main.setDeadzone((70 * L.ui) / zoom, (100 * L.ui) / zoom);
+    // Small deadzone for the same reason: inside it the camera does not move at
+    // all, so a big one is a box you can swing around in while nothing tracks.
+    this.cameras.main.setDeadzone((34 * L.ui) / zoom, (56 * L.ui) / zoom);
     this.uiCam?.setSize(L.w, L.h);
 
     this.controls.layout(L);
@@ -370,7 +480,7 @@ export class PlayScene extends Phaser.Scene {
     g.fillRect(pxc + 2 * L.ui, pyc - 8 * L.ui, 4 * L.ui, 16 * L.ui);
 
     // The run clock as an arc — colour carries the urgency.
-    const frac = Phaser.Math.Clamp(remainingMs / RUN_MS, 0, 1);
+    const frac = Phaser.Math.Clamp(remainingMs / START_TIME_MS, 0, 1);
     const urgent = remainingMs <= WARNING_MS;
     const color = urgent ? C.danger : C.gold;
     const r = 40 * L.ui;
@@ -397,36 +507,25 @@ export class PlayScene extends Phaser.Scene {
     if (s.taken || this.finished) return;
     s.taken = true;
 
-    const colorByKind: Record<PickupKind, number> = {
-      fragment: C.gold,
-      golden: C.gold,
-      enemy: C.danger,
-    };
-
+    // Every pickup does exactly one thing: it puts seconds back on the clock.
     switch (s.kind) {
-      case 'fragment':
-        this.tally.fragments++;
-        this.collected += SCORE.fragment;
+      case 'clock':
+        this.tally.clocks++;
+        this.addTime(TIME_GAIN.clock);
         this.streak++;
         sfx.collect(this.streak);
         break;
       case 'golden':
-        this.tally.goldenClocks++;
-        this.collected += SCORE.goldenClock;
+        this.tally.goldens++;
+        this.addTime(TIME_GAIN.golden);
         this.streak++;
         sfx.collectGolden();
         this.cameras.main.shake(180, 0.006);
-        this.flashMessage('GOLDEN CLOCK', C.gold);
-        break;
-      case 'enemy':
-        this.tally.enemyFragments++;
-        this.stolen += SCORE.enemyFragment;
-        sfx.steal();
-        this.flashMessage(`-${SCORE.enemyFragment}s STOLEN`, C.danger);
+        this.flashMessage(`+${TIME_GAIN.golden}s`, C.gold);
         break;
     }
 
-    this.burst(s.x, s.y, colorByKind[s.kind], s.kind === 'golden' ? 26 : 10);
+    this.burst(s.x, s.y, C.gold, s.kind === 'golden' ? 26 : 10);
     this.popNumber(s.x, s.y, s.kind);
 
     this.tweens.add({
@@ -440,21 +539,20 @@ export class PlayScene extends Phaser.Scene {
   }
 
   /**
-   * Getting hit costs time, not seconds.
-   *
-   * The knockback, the i-frames and the ruined line are the punishment: they
-   * spend the run's scarcest resource, which is the clock. Taking banked
-   * seconds away as well is what let a beginner finish a whole run on zero —
-   * the single worst thing this game could tell a new player.
+   * Getting hit costs seconds off the clock, which is the only currency there
+   * is. The knockback and the ruined line cost more of it again.
    */
   private onHazard(): void {
     if (this.finished) return;
     if (!this.player.takeHit()) return;
 
+    this.tally.hits++;
+    this.addTime(-TIME_LOSS.hazard);
+    this.flashMessage(`-${TIME_LOSS.hazard}s`, C.danger);
     this.streak = 0;
     sfx.hurt();
     this.cameras.main.shake(220, 0.011);
-    this.cameras.main.flash(120, 255, 90, 61);
+    this.cameras.main.flash(90, 255, 90, 61, false);
 
     // Knock the player clear so they cannot sit inside a spike strip.
     this.player.body.velocity.y = -420;
@@ -491,13 +589,8 @@ export class PlayScene extends Phaser.Scene {
   }
 
   private popNumber(x: number, y: number, kind: PickupKind): void {
-    const value =
-      kind === 'fragment'
-        ? `+${SCORE.fragment}`
-        : kind === 'golden'
-          ? `+${SCORE.goldenClock}`
-          : `-${SCORE.enemyFragment}`;
-    const color = kind === 'enemy' ? C.danger : C.gold;
+    const value = kind === 'golden' ? `+${TIME_GAIN.golden}s` : `+${TIME_GAIN.clock}s`;
+    const color = C.gold;
 
     const t = this.add
       .text(x, y, value, { fontFamily: FONT, fontSize: '20px', color: hex(color) })
@@ -543,28 +636,64 @@ export class PlayScene extends Phaser.Scene {
   update(_time: number, delta: number): void {
     if (this.finished) return;
 
-    // The run clock is the server's. A backgrounded tab does not pause it.
-    const elapsed = store.serverNow() - this.run.startedAt;
-    const remaining = Math.max(0, RUN_MS - elapsed);
+    const intent = this.controls.read();
 
-    this.tickWarning(remaining);
+    // The clock is frozen until the player does something. Nobody should lose
+    // a second to reading the screen, and it means the run always begins on the
+    // player's terms rather than on a countdown they did not ask for.
+    if (!this.started && (intent.moveX !== 0 || intent.grapple)) this.started = true;
 
-    if (remaining <= 0) {
-      this.finish();
-      return;
+    if (this.started) {
+      this.timeMs -= delta;
+
+      // The wall clock is still the server's business: a run that has been open
+      // absurdly long could not have survived on pickups, and the server would
+      // reject it anyway, so end it here rather than let the player keep going.
+      const openFor = store.serverNow() - this.run.startedAt;
+      if (openFor > MAX_RUN_MS) {
+        // The run has been open so long the server will refuse it whatever
+        // happens next. Stop here rather than let the player keep trying.
+        this.timeMs = 0;
+        this.abandon();
+        return;
+      }
+      if (this.timeMs <= 0) {
+        this.timeMs = 0;
+        this.outOfTime();
+        return;
+      }
     }
 
-    const intent = this.finished ? NO_INTENT : this.controls.read();
+    this.tickWarning(this.timeMs);
+
     this.player.update(delta, intent, this.arena.anchors);
 
     this.updateEnemies(delta);
     this.drawRope();
     this.highlightAnchor();
+    this.pulseGoal();
+
+    // The anchor count changes on a grab, which is nowhere near the code that
+    // touches the clock — so it gets refreshed here rather than relying on a
+    // pickup happening to land at the same moment.
+    if (this.player.anchorsUsed.size !== this.shownAnchors) this.updateHudText();
 
     if (this.player.y > this.killY) this.onFall();
 
-    this.hudTimer.setText((remaining / 1000).toFixed(1));
-    this.drawHudRing(remaining);
+    this.hudTimer.setText((this.timeMs / 1000).toFixed(1));
+    this.drawHudRing(this.timeMs);
+  }
+
+  /**
+   * Adds (or removes) seconds.
+   *
+   * Capped at the starting tank so a lucky pickup run cannot bank an
+   * unspendable buffer, and floored at zero because a negative clock is just
+   * a finished run.
+   */
+  private addTime(seconds: number): void {
+    this.timeMs = Phaser.Math.Clamp(this.timeMs + seconds * 1000, 0, START_TIME_MS * 2);
+    this.updateHudText();
   }
 
   private tickWarning(remaining: number): void {
@@ -640,16 +769,16 @@ export class PlayScene extends Phaser.Scene {
   }
 
   /**
-   * One number, not two.
+   * Under the clock: how much of the arena you have actually flown through.
    *
-   * Seconds collected and seconds stolen do different things to the two banks,
-   * but they do the same thing to the only question a player is asking mid-run
-   * — "is my team better off?" — so they are shown as a single total. The split
-   * still exists on the wire and on the server; it just is not a thing anyone
-   * has to hold in their head while swinging.
+   * Anchors are what the score pays for besides leftover time, so showing the
+   * running count is the only way a player can tell that swinging *more* is
+   * worth something.
    */
   private updateHudText(): void {
-    this.hudScore.setText(`+${this.collected + this.stolen}s`);
+    const n = this.player?.anchorsUsed.size ?? 0;
+    this.shownAnchors = n;
+    this.hudScore.setText(n === 1 ? '1 anchor' : `${n} anchors`);
   }
 
   /* ---------------------------------------------------------------------- */
@@ -662,14 +791,72 @@ export class PlayScene extends Phaser.Scene {
     this.scene.launch('cs-pause', { from: 'cs-play' });
   }
 
+  /** Touched the goal: the run is a success and the clock stops where it is. */
+  private onGoal(): void {
+    if (this.finished) return;
+    this.tally.reachedGoal = true;
+    this.tally.msLeft = Math.max(0, Math.round(this.timeMs));
+    sfx.victory();
+    this.cameras.main.shake(240, 0.009);
+    this.cameras.main.flash(200, 61, 255, 160);
+    this.flashMessage('GOAL', C.goal);
+    this.finish();
+  }
+
+  /**
+   * The clock hit zero. Straight back in.
+   *
+   * There is no results screen here on purpose: a failed run scores nothing, so
+   * there is nothing to post and nothing to read — a screen would only stand
+   * between the player and the retry they already want. The scene restarts from
+   * the last armed checkpoint with the clock it recorded, carrying the tally and
+   * the anchors, because this is the same attempt resumed rather than a new run.
+   */
+  private outOfTime(): void {
+    if (this.finished) return;
+    this.finished = true;
+
+    sfx.fall();
+    this.cameras.main.flash(200, 255, 90, 61);
+    this.flashMessage(this.resumeAt ? 'BACK TO CHECKPOINT' : 'OUT OF TIME', C.danger);
+    this.controls.setVisible(false);
+
+    const resume: Resume = {
+      armed: [...this.armed],
+      at: this.resumeAt,
+      timeMs: this.resumeTimeMs,
+      anchors: [...this.player.anchorsUsed],
+      tally: { ...this.tally },
+    };
+
+    // Just long enough to read the word, and no longer.
+    this.cameras.main.fadeOut(220, 7, 11, 22);
+    this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
+      this.scene.restart({ run: this.run, resume });
+    });
+  }
+
+  /**
+   * The run has outlived what the server will accept, so retrying is pointless.
+   * Unlike running out of time, this ends the attempt for good.
+   */
+  private abandon(): void {
+    if (this.finished) return;
+    this.tally.reachedGoal = false;
+    this.tally.msLeft = 0;
+    this.flashMessage('RUN EXPIRED', C.danger);
+    this.finish();
+  }
+
   private finish(): void {
     if (this.finished) return;
     this.finished = true;
+    this.tally.anchorsUsed = this.player.anchorsUsed.size;
     this.controls.setVisible(false);
     sfx.runEnd();
-    this.cameras.main.fadeOut(280, 7, 11, 22);
+    this.cameras.main.fadeOut(600, 7, 11, 22);
     this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
-      this.scene.start('cs-results', { runId: this.run.runId, tally: this.tally, team: this.team });
+      this.scene.start('cs-results', { runId: this.run.runId, tally: this.tally });
     });
   }
 

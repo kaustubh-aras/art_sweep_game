@@ -6,9 +6,7 @@ import type {
   RunStartResponse,
   RunTally,
   StateResponse,
-  TeamResponse,
 } from '../shared/api';
-import type { Team } from '../shared/config';
 
 /**
  * The client half of the API.
@@ -89,14 +87,10 @@ async function call<T>(path: string, method: 'GET' | 'POST', body?: unknown): Pr
 export const api = {
   state: (): Promise<StateResponse> => call<StateResponse>('/api/state', 'GET'),
 
-  chooseTeam: (team: Team): Promise<TeamResponse> =>
-    call<TeamResponse>('/api/team', 'POST', { team }),
-
   startRun: (): Promise<RunStartResponse> => call<RunStartResponse>('/api/run/start', 'POST'),
 
-  /** `team` is sent only for a run that began before the player had a side. */
-  finishRun: (runId: string, tally: RunTally, team?: Team): Promise<RunFinishResponse> =>
-    call<RunFinishResponse>('/api/run/finish', 'POST', { runId, tally, team }),
+  finishRun: (runId: string, tally: RunTally): Promise<RunFinishResponse> =>
+    call<RunFinishResponse>('/api/run/finish', 'POST', { runId, tally }),
 
   leaderboard: (): Promise<LeaderboardResponse> =>
     call<LeaderboardResponse>('/api/leaderboard', 'GET'),

@@ -2,169 +2,145 @@
  * The wire contract between the Clockshot client and its Devvit server.
  *
  * Every response the client renders is shaped here. Note what is absent from
- * the request types: the client never sends a username, a team bank, or a
+ * the request types: the client never sends a username, a score, or a
  * timestamp it computed itself. It sends what it did during a run; the server
  * decides what that was worth.
  */
-import type { Team } from './config';
 
-/** Raw tally of what a player did during one run. All values are counts. */
+/**
+ * Raw tally of what a player did during one run.
+ *
+ * Everything here is a count or a duration — never a score. `anchorsUsed` is
+ * the number of *distinct* anchors the player swung from, which is what the
+ * points are paid on.
+ */
 export interface RunTally {
-  fragments: number;
-  largeFragments: number;
-  goldenClocks: number;
-  enemyFragments: number;
-  enemyKills: number;
-  hazardHits: number;
-  falls: number;
+  /** True only if the player actually touched the goal. */
+  reachedGoal: boolean;
+  /** Milliseconds still on the clock at the moment they reached it. */
+  msLeft: number;
+  anchorsUsed: number;
+  clocks: number;
+  goldens: number;
+  hits: number;
 }
 
 export const EMPTY_TALLY: RunTally = {
-  fragments: 0,
-  largeFragments: 0,
-  goldenClocks: 0,
-  enemyFragments: 0,
-  enemyKills: 0,
-  hazardHits: 0,
-  falls: 0,
+  reachedGoal: false,
+  msLeft: 0,
+  anchorsUsed: 0,
+  clocks: 0,
+  goldens: 0,
+  hits: 0,
 };
 
-/** A player's standing, used by both leaderboards. */
+/** A player's standing on the board. */
 export interface LeaderRow {
   rank: number;
   username: string;
-  seconds: number;
-  team: Team | null;
+  points: number;
   /** True for the requesting player, so the client can highlight the row. */
   isYou: boolean;
 }
 
-export type ActivityKind =
-  | 'added'
-  | 'stole'
-  | 'lead'
-  | 'golden'
-  | 'joined'
-  | 'roundEnd';
+export type ActivityKind = 'finished' | 'best' | 'lead' | 'windowEnd';
 
 /** One line in the community feed. Rendered from these fields, not a string. */
 export interface ActivityItem {
   id: string;
   kind: ActivityKind;
   username: string;
-  team: Team;
-  seconds: number;
+  points: number;
   at: number;
 }
 
-/** The shared state of the current community round. */
-export interface CommunityState {
+/** The shared state of the current leaderboard window. */
+export interface BoardState {
   roundIndex: number;
   startsAt: number;
   endsAt: number;
   /** Server clock at the moment of the response; the client corrects drift. */
   now: number;
-  banks: Record<Team, number>;
-  leader: Team | null;
+  /** Best score anyone has posted this window, or null if nobody has yet. */
+  topScore: number | null;
+  topPlayer: string | null;
   players: number;
-  previous: PreviousRound | null;
+  previous: PreviousWindow | null;
 }
 
-export interface PreviousRound {
+export interface PreviousWindow {
   roundIndex: number;
-  banks: Record<Team, number>;
-  winner: Team | null;
-  /** True when the round ended level. */
-  draw: boolean;
+  topScore: number | null;
+  topPlayer: string | null;
 }
 
-/** Everything the client needs to render the menu and dashboard in one call. */
+/** Everything the client needs to render the menu in one call. */
 export interface StateResponse {
   status: 'ok';
-  community: CommunityState;
+  board: BoardState;
   you: {
     username: string;
-    team: Team | null;
-    /** Seconds this player has contributed during the current round. */
-    contribution: number;
+    /** This player's best score in the current window. */
+    best: number;
     rank: number | null;
+    runs: number;
     /** Set when this player already has a run in flight. */
     activeRunId: string | null;
-    /** True once the player may start another run. */
     canPlay: boolean;
     cooldownMs: number;
   };
   activity: ActivityItem[];
 }
 
-export interface TeamRequest {
-  team: Team;
-}
-
-export interface TeamResponse {
-  status: 'ok';
-  team: Team;
-  /** False when the pick was rejected because the round already has their runs. */
-  changed: boolean;
-  message?: string;
-}
-
 export interface RunStartResponse {
   status: 'ok';
   runId: string;
-  /** Server time the run began, and when it must be submitted by. */
+  /** Server time the run began, and the latest it may be submitted. */
   startedAt: number;
   expiresAt: number;
   now: number;
-  /** Null when the player has not picked a side yet — they choose after. */
-  team: Team | null;
   roundIndex: number;
   /** Seed so the arena layout is identical if the player refreshes mid-run. */
   seed: number;
-  /**
-   * Which arena this round is played in.
-   *
-   * Derived from the round index, so everybody playing right now is in the same
-   * place and their scores are comparable. The server picks the number; the
-   * client owns what that number looks like.
-   */
+  /** Which arena this window is played in. */
   arenaIndex: number;
+  /** Milliseconds the player starts with on the clock. */
+  startTimeMs: number;
 }
 
 export interface RunFinishRequest {
   runId: string;
   tally: RunTally;
-  /**
-   * The side these seconds go to, sent only when the run started without one.
-   *
-   * This is the play-first path: a new player runs, sees what they earned, and
-   * *then* decides who gets it — which turns the team choice from a toll gate
-   * into a reward. Ignored when the run already carries a team.
-   */
-  team?: Team;
 }
 
 export interface RunFinishResponse {
   status: 'ok';
   /** What the server decided the run was worth, after capping. */
-  awarded: number;
-  stolen: number;
+  points: number;
+  /** The parts that made up that number, so the screen can show its working. */
+  breakdown: {
+    goal: number;
+    anchors: number;
+    time: number;
+  };
   /** Set when the server clamped the client's claim. */
   adjusted: boolean;
-  community: CommunityState;
+  /** True when this beat the player's own best this window. */
+  personalBest: boolean;
+  /** True when this took the top of the board. */
+  tookLead: boolean;
+  board: BoardState;
   you: {
-    team: Team;
-    contribution: number;
+    best: number;
     rank: number | null;
+    runs: number;
   };
-  leadChanged: boolean;
   activity: ActivityItem[];
 }
 
 export interface LeaderboardResponse {
   status: 'ok';
   players: LeaderRow[];
-  teams: { team: Team; seconds: number }[];
   roundIndex: number;
 }
 
@@ -178,7 +154,6 @@ export interface ErrorResponse {
   status: 'error';
   code:
     | 'no_user'
-    | 'no_team'
     | 'bad_request'
     | 'run_not_found'
     | 'run_expired'

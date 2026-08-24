@@ -2,35 +2,33 @@ import { context, createServer, getServerPort, reddit } from '@devvit/web/server
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { UiResponse } from '@devvit/web/shared';
 
-import { K } from './keys';
-import { redis } from '@devvit/web/server';
 import {
-  addContribution,
-  addToBank,
-  communityState,
-  contributionOf,
+  bestOf,
+  boardState,
+  bumpRuns,
   ensurePlayer,
-  leaderOf,
   leaderboard,
   noteLeadChange,
   pushActivity,
   rankOf,
   readActivity,
-  readBanks,
-  teamTotals,
+  recordScore,
+  runsOf,
+  topOf,
 } from './community';
 import {
   claimRun,
   clearActiveRun,
   msUntilAllowed,
   markFinished,
+  plausibleClock,
   readActiveRun,
   sanitizeTally,
   scoreRun,
   startRun,
   validateTiming,
 } from './runs';
-import { RUN_MS, arenaIndexAt, isTeam, otherTeam, roundIndexAt, type Team } from '../shared/config';
+import { START_TIME_MS, MAX_RUN_MS, arenaIndexAt, roundIndexAt } from '../shared/config';
 import type {
   ActivityItem,
   ActivityResponse,
@@ -39,7 +37,6 @@ import type {
   RunFinishResponse,
   RunStartResponse,
   StateResponse,
-  TeamResponse,
 } from '../shared/api';
 
 /**
@@ -53,14 +50,17 @@ import type {
  *      `scoreRun` says it is worth, timed against the server's own `Date.now()`.
  */
 
-const TITLE = 'Clockshot — Community Time War';
+const TITLE = 'Clockshot — Swing Against the Clock';
 
 const TEXT_FALLBACK = [
-  '**Clockshot** is a community time war.',
+  '**Clockshot** is a grappling time trial.',
   '',
-  'Pick Red or Blue, take a 30-second grappling run through the arena, and every',
-  'second you bank goes straight into the shared team clock. Whichever team is',
-  'ahead when the community round ends wins it.',
+  'You start with ten seconds. The clock drains the moment you move, and the',
+  'only way to keep going is to swing through the clock pickups scattered',
+  'across the arena. Reach the goal before it hits zero.',
+  '',
+  'The more of the arena you fly through and the more time you have left when',
+  'you land, the higher you place on the board.',
   '',
   'Open this post in the Reddit app or on new Reddit to play.',
 ].join('\n');
@@ -95,7 +95,6 @@ async function readJson(req: IncomingMessage): Promise<Json> {
  * The length is not optional here. Without it Node falls back to chunked
  * transfer encoding, which the Devvit gateway refuses outright:
  *
- *   Failed to POST to Node.js server endpoint /internal/on-app-install;
  *   server responded with Content-Length header "null" but greater than zero
  *   required for nonempty response
  *
@@ -105,8 +104,8 @@ async function readJson(req: IncomingMessage): Promise<Json> {
  * short of a real deploy could have caught it.
  *
  * The byte length has to come from a Buffer rather than `string.length`:
- * usernames and activity lines are UTF-8, and any non-ASCII character would
- * make a character count disagree with the bytes actually on the wire.
+ * usernames are UTF-8, and any non-ASCII character would make a character count
+ * disagree with the bytes actually on the wire.
  */
 function send(res: ServerResponse, status: number, body: unknown): void {
   const payload = Buffer.from(JSON.stringify(body) ?? 'null', 'utf8');
@@ -117,7 +116,12 @@ function send(res: ServerResponse, status: number, body: unknown): void {
   res.end(payload);
 }
 
-function fail(res: ServerResponse, status: number, code: ErrorResponse['code'], message: string): void {
+function fail(
+  res: ServerResponse,
+  status: number,
+  code: ErrorResponse['code'],
+  message: string,
+): void {
   send(res, status, { status: 'error', code, message } satisfies ErrorResponse);
 }
 
@@ -130,68 +134,54 @@ function currentPlayer(): { userId: string; username: string } | null {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Team selection                                                             */
-/* -------------------------------------------------------------------------- */
-
-async function readTeam(userId: string): Promise<Team | null> {
-  const raw = await redis.get(K.playerTeam(userId));
-  return isTeam(raw) ? raw : null;
-}
-
-async function writeTeam(userId: string, team: Team): Promise<void> {
-  await redis.set(K.playerTeam(userId), team);
-}
-
-/* -------------------------------------------------------------------------- */
 /* Handlers                                                                   */
 /* -------------------------------------------------------------------------- */
 
 async function handleState(res: ServerResponse): Promise<void> {
   const player = currentPlayer();
   const now = Date.now();
-  const community = await communityState(now);
+  const board = await boardState(now);
 
   if (!player) {
-    // Logged-out viewers still get to watch the battle; they just cannot play.
+    // Logged-out viewers still get to watch the board; they just cannot play.
     send(res, 200, {
       status: 'ok',
-      community,
+      board,
       you: {
         username: '',
-        team: null,
-        contribution: 0,
+        best: 0,
         rank: null,
+        runs: 0,
         activeRunId: null,
         canPlay: false,
         cooldownMs: 0,
       },
-      activity: await readActivity(community.roundIndex),
+      activity: await readActivity(board.roundIndex),
     } satisfies StateResponse);
     return;
   }
 
-  const [team, activity, cooldownMs, active] = await Promise.all([
-    readTeam(player.userId),
-    readActivity(community.roundIndex),
+  const [activity, cooldownMs, active] = await Promise.all([
+    readActivity(board.roundIndex),
     msUntilAllowed(player.userId, now),
     readActiveRun(player.userId),
   ]);
 
-  const [contribution, rank] = await Promise.all([
-    contributionOf(community.roundIndex, player.username),
-    rankOf(community.roundIndex, player.username),
+  const [best, rank, runs] = await Promise.all([
+    bestOf(board.roundIndex, player.username),
+    rankOf(board.roundIndex, player.username),
+    runsOf(board.roundIndex, player.username),
   ]);
 
   send(res, 200, {
     status: 'ok',
-    community,
+    board,
     you: {
       username: player.username,
-      team,
-      contribution: Math.round(contribution),
+      best: Math.round(best),
       rank,
+      runs,
       activeRunId: active?.runId ?? null,
-      // Not having a side no longer blocks a run — the choice comes after.
       canPlay: cooldownMs === 0,
       cooldownMs,
     },
@@ -199,84 +189,35 @@ async function handleState(res: ServerResponse): Promise<void> {
   } satisfies StateResponse);
 }
 
-async function handleTeam(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const player = currentPlayer();
-  if (!player) return fail(res, 401, 'no_user', 'Log in to Reddit to pick a team.');
-
-  const body = await readJson(req);
-  if (!isTeam(body.team)) {
-    return fail(res, 400, 'bad_request', 'Pick either the red team or the blue team.');
-  }
-
-  const now = Date.now();
-  const roundIndex = roundIndexAt(now);
-  const current = await readTeam(player.userId);
-
-  if (current === body.team) {
-    await ensurePlayer(roundIndex, player.username, body.team);
-    return send(res, 200, { status: 'ok', team: body.team, changed: false } satisfies TeamResponse);
-  }
-
-  // Switching sides mid-round would let one player bank for both teams, so the
-  // choice locks as soon as they have contributed anything to this round.
-  if (current !== null) {
-    const contributed = await contributionOf(roundIndex, player.username);
-    if (contributed > 0) {
-      return send(res, 200, {
-        status: 'ok',
-        team: current,
-        changed: false,
-        message: 'You have already played for your team this round. You can switch when the next round begins.',
-      } satisfies TeamResponse);
-    }
-  }
-
-  await writeTeam(player.userId, body.team);
-  await ensurePlayer(roundIndex, player.username, body.team);
-
-  const joined = await pushActivity(roundIndex, {
-    kind: 'joined',
-    username: player.username,
-    team: body.team,
-    seconds: 0,
-    at: now,
-  });
-  void joined;
-
-  send(res, 200, { status: 'ok', team: body.team, changed: true } satisfies TeamResponse);
-}
-
 async function handleRunStart(res: ServerResponse): Promise<void> {
   const player = currentPlayer();
   if (!player) return fail(res, 401, 'no_user', 'Log in to Reddit to play.');
 
-  // No team is not an error here. A first-time player is sent straight into a
-  // run and picks a side when they bank it — being asked to commit to a colour
-  // before seeing the game is the single biggest thing standing between a new
-  // player and their first thirty seconds.
-  const team = await readTeam(player.userId);
-
   const now = Date.now();
   const cooldown = await msUntilAllowed(player.userId, now);
   if (cooldown > 0) {
-    return fail(res, 429, 'rate_limited', `Take a breath — ${Math.ceil(cooldown / 1000)}s until your next run.`);
+    return fail(
+      res,
+      429,
+      'rate_limited',
+      `Take a breath — ${Math.ceil(cooldown / 1000)}s until your next run.`,
+    );
   }
 
   const roundIndex = roundIndexAt(now);
-  const { run } = await startRun(player.userId, team, roundIndex, now);
-  // Only a player who has actually chosen a side belongs on the round board.
-  if (team) await ensurePlayer(roundIndex, player.username, team);
+  const { run } = await startRun(player.userId, roundIndex, now);
+  await ensurePlayer(roundIndex, player.username);
 
   send(res, 200, {
     status: 'ok',
     runId: run.runId,
     startedAt: run.startedAt,
-    expiresAt: run.startedAt + RUN_MS,
+    expiresAt: run.startedAt + MAX_RUN_MS,
     now,
-    team: run.team,
     roundIndex: run.roundIndex,
     seed: run.seed,
     arenaIndex: arenaIndexAt(run.roundIndex),
+    startTimeMs: START_TIME_MS,
   } satisfies RunStartResponse);
 }
 
@@ -291,7 +232,7 @@ async function handleRunFinish(req: IncomingMessage, res: ServerResponse): Promi
   const now = Date.now();
   const run = await readActiveRun(player.userId);
 
-  // No active run, or a different one, means this was already banked or never
+  // No active run, or a different one, means this was already scored or never
   // started here. Either way there is nothing to award.
   if (!run || run.runId !== runId) {
     return fail(res, 409, 'run_duplicate', 'That run has already been counted.');
@@ -303,35 +244,13 @@ async function handleRunFinish(req: IncomingMessage, res: ServerResponse): Promi
     // An early submit is recoverable, so the run is deliberately left in place
     // and nothing is spent — the client simply asks again once the clock has
     // caught up. Clearing here would turn a moment of clock skew into a lost
-    // run, because the honest submit that follows would find nothing to bank.
+    // run, because the honest submit that follows would find nothing to score.
     if (timing.code === 'too_early') {
       return fail(res, 425, 'too_early', timing.message);
     }
-    // A late or out-of-round run genuinely cannot count, and it still has to be
-    // cleared or the player is stuck with a run they can never finish.
     await clearActiveRun(player.userId);
     await markFinished(player.userId, now);
     return fail(res, 409, timing.code, timing.message);
-  }
-
-  // Resolve which side these seconds belong to *before* the run is spent, so a
-  // submission that arrives without a choice can simply be sent back for one
-  // rather than burning the run.
-  let team = run.team;
-  if (!team) {
-    if (!isTeam(body.team)) {
-      return fail(res, 400, 'no_team', 'Pick a side to bank these seconds.');
-    }
-    // The round lock still wins: someone who already banked for a side this
-    // round cannot use a teamless run to score for the other one.
-    const existing = await readTeam(player.userId);
-    const contributed = existing ? await contributionOf(roundIndex, player.username) : 0;
-    if (existing && contributed > 0) {
-      team = existing;
-    } else {
-      team = body.team;
-      await writeTeam(player.userId, team);
-    }
   }
 
   // The atomic gate: only one request can ever claim this run id.
@@ -343,103 +262,72 @@ async function handleRunFinish(req: IncomingMessage, res: ServerResponse): Promi
   await clearActiveRun(player.userId);
   await markFinished(player.userId, now);
 
-  const { tally, adjusted } = sanitizeTally(body.tally);
-  const { awarded, stolen } = scoreRun(tally);
-  const foe = otherTeam(team);
+  const sanitized = sanitizeTally(body.tally);
+  let { tally } = sanitized;
+  let { adjusted } = sanitized;
 
-  // Both bank writes are atomic increments, so simultaneous runs from other
-  // players add to these totals rather than overwriting them.
-  await addToBank(roundIndex, team, awarded);
-  const loss = stolen > 0 ? await addToBank(roundIndex, foe, -stolen) : { applied: 0 };
-  const actuallyStolen = Math.abs(loss.applied);
+  // The clock the client claims to have left has to be one it could ever have
+  // held, given the starting tank and what it says it collected.
+  if (!plausibleClock(tally)) {
+    tally = { ...tally, msLeft: 0 };
+    adjusted = true;
+  }
 
-  const contribution = await addContribution(
-    roundIndex,
-    player.username,
-    team,
-    awarded + actuallyStolen,
-  );
+  const { points, breakdown } = scoreRun(tally);
+
+  const runs = await bumpRuns(roundIndex, player.username);
+  const { best, personalBest } = await recordScore(roundIndex, player.username, points);
 
   const newActivity: ActivityItem[] = [];
-  if (awarded > 0) {
+  if (points > 0) {
     newActivity.push(
       await pushActivity(roundIndex, {
-        kind: 'added',
+        kind: personalBest ? 'best' : 'finished',
         username: player.username,
-        team,
-        seconds: awarded,
-        at: now,
-      }),
-    );
-  }
-  if (actuallyStolen > 0) {
-    newActivity.push(
-      await pushActivity(roundIndex, {
-        kind: 'stole',
-        username: player.username,
-        team,
-        seconds: actuallyStolen,
-        at: now,
-      }),
-    );
-  }
-  if (tally.goldenClocks > 0) {
-    newActivity.push(
-      await pushActivity(roundIndex, {
-        kind: 'golden',
-        username: player.username,
-        team,
-        seconds: tally.goldenClocks,
+        points,
         at: now,
       }),
     );
   }
 
-  const banks = await readBanks(roundIndex);
-  const leader = leaderOf(banks);
-  const leadChanged = await noteLeadChange(roundIndex, leader);
-  if (leadChanged && leader) {
+  const top = await topOf(roundIndex);
+  const tookLead = await noteLeadChange(roundIndex, top.player);
+  if (tookLead && top.player === player.username) {
     newActivity.push(
       await pushActivity(roundIndex, {
         kind: 'lead',
         username: player.username,
-        team: leader,
-        seconds: banks[leader],
+        points: top.score ?? points,
         at: now + 1,
       }),
     );
   }
 
-  const [community, rank, activity] = await Promise.all([
-    communityState(Date.now()),
+  const [board, rank, activity] = await Promise.all([
+    boardState(Date.now()),
     rankOf(roundIndex, player.username),
     readActivity(roundIndex),
   ]);
 
   send(res, 200, {
     status: 'ok',
-    awarded,
-    stolen: actuallyStolen,
+    points,
+    breakdown,
     adjusted,
-    community,
-    you: { team, contribution: Math.round(contribution), rank },
-    leadChanged,
+    personalBest: personalBest && points > 0,
+    tookLead: tookLead && top.player === player.username,
+    board,
+    you: { best: Math.round(best), rank, runs },
     activity,
   } satisfies RunFinishResponse);
 }
 
 async function handleLeaderboard(res: ServerResponse): Promise<void> {
   const player = currentPlayer();
-  const now = Date.now();
-  const roundIndex = roundIndexAt(now);
-  const [players, banks] = await Promise.all([
-    leaderboard(roundIndex, player?.username ?? ''),
-    readBanks(roundIndex),
-  ]);
+  const roundIndex = roundIndexAt(Date.now());
   send(res, 200, {
     status: 'ok',
-    players,
-    teams: teamTotals(banks),
+    players: await leaderboard(roundIndex, player?.username ?? ''),
     roundIndex,
   } satisfies LeaderboardResponse);
 }
@@ -480,8 +368,6 @@ const server = createServer(async (req, res) => {
     switch (`${method} ${path}`) {
       case 'GET /api/state':
         return await handleState(res);
-      case 'POST /api/team':
-        return await handleTeam(req, res);
       case 'POST /api/run/start':
         return await handleRunStart(res);
       case 'POST /api/run/finish':

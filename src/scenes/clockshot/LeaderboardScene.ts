@@ -1,8 +1,8 @@
 import Phaser from 'phaser';
-import { C, FONT, hex, teamColor, teamName } from '@/clockshot/theme';
+import { C, FONT, hex } from '@/clockshot/theme';
 import { api, NetError } from '@/clockshot/net';
-import { store } from '@/clockshot/store';
-import { Button, drawTeamBar, fadeTo, layoutOf, text } from '@/clockshot/ui';
+import { formatPoints } from '@/clockshot/store';
+import { Button, fadeTo, layoutOf, text } from '@/clockshot/ui';
 import type { LeaderRow } from '@/shared/api';
 
 /**
@@ -14,7 +14,7 @@ export class LeaderboardScene extends Phaser.Scene {
   private bar!: Phaser.GameObjects.Graphics;
   private rowsGfx!: Phaser.GameObjects.Graphics;
   private heading!: Phaser.GameObjects.Text;
-  private teamsText!: Phaser.GameObjects.Text;
+  private topText!: Phaser.GameObjects.Text;
   private status!: Phaser.GameObjects.Text;
   private rowTexts: Phaser.GameObjects.Text[] = [];
   private backBtn!: Button;
@@ -34,7 +34,7 @@ export class LeaderboardScene extends Phaser.Scene {
 
     this.heading = text(this, 0, 0, 'LEADERBOARD', 20, C.ink);
     this.heading.setStyle({ fontFamily: FONT, fontStyle: 'bold' });
-    this.teamsText = text(this, 0, 0, '', 13, C.dim);
+    this.topText = text(this, 0, 0, '', 13, C.dim);
     this.status = text(this, 0, 0, 'loading…', 12, C.faint);
 
     this.refreshBtn = new Button(this, 0, 0, 'REFRESH', { width: 240, color: C.cyan }, () =>
@@ -60,13 +60,13 @@ export class LeaderboardScene extends Phaser.Scene {
     try {
       const res = await api.leaderboard();
       this.rows = res.players;
-      this.teamsText.setText(
-        res.teams.map((t) => `${teamName(t.team)} ${t.seconds}s`).join('   ·   '),
+      const leader = this.rows[0];
+      this.topText.setText(
+        leader ? `top: u/${leader.username} — ${formatPoints(leader.points)}` : 'no scores yet',
       );
       this.status.setText(
-        this.rows.length === 0 ? 'Nobody has banked any seconds this round yet.' : '',
+        this.rows.length === 0 ? 'Nobody has reached the goal yet. Be first.' : '',
       );
-      this.drawBarFrom(res.teams);
     } catch (err) {
       this.status
         .setText(err instanceof NetError ? err.message : 'Could not load the leaderboard.')
@@ -75,13 +75,6 @@ export class LeaderboardScene extends Phaser.Scene {
       this.loading = false;
       this.renderRows();
     }
-  }
-
-  private drawBarFrom(teams: { team: string; seconds: number }[]): void {
-    const red = teams.find((t) => t.team === 'red')?.seconds ?? 0;
-    const blue = teams.find((t) => t.team === 'blue')?.seconds ?? 0;
-    const L = layoutOf(this);
-    drawTeamBar(this.bar, L.x + 18 * L.ui, L.y + 84 * L.ui, L.iw - 36 * L.ui, 16 * L.ui, red, blue);
   }
 
   private renderRows(): void {
@@ -99,7 +92,7 @@ export class LeaderboardScene extends Phaser.Scene {
 
     shown.forEach((r, i) => {
       const y = top + i * rowH;
-      const accent = r.team ? teamColor(r.team) : C.faint;
+      const accent = r.isYou ? C.gold : C.faint;
 
       if (r.isYou) {
         // The player's own row is lifted out, so they can find themselves.
@@ -111,7 +104,7 @@ export class LeaderboardScene extends Phaser.Scene {
 
       const rank = text(this, L.x + 28 * L.ui, y, `${r.rank}`, 11.5, C.faint, 'left');
       const name = text(this, L.x + 58 * L.ui, y, `u/${r.username}`, 11.5, r.isYou ? C.ink : C.dim, 'left');
-      const secs = text(this, L.x + L.iw - 18 * L.ui, y, `${r.seconds}s`, 12, accent, 'right');
+      const secs = text(this, L.x + L.iw - 18 * L.ui, y, formatPoints(r.points), 12, accent, 'right');
       for (const t of [rank, name, secs]) {
         t.setFontSize(Math.round(11 * L.ui));
         this.rowTexts.push(t);
@@ -143,7 +136,7 @@ export class LeaderboardScene extends Phaser.Scene {
     g.strokeRoundedRect(L.x, L.y, L.iw, 112 * L.ui, 16 * L.ui);
 
     this.heading.setPosition(L.cx, L.y + 28 * L.ui).setFontSize(Math.round(18 * L.ui));
-    this.teamsText.setPosition(L.cx, L.y + 56 * L.ui).setFontSize(Math.round(12.5 * L.ui));
+    this.topText.setPosition(L.cx, L.y + 56 * L.ui).setFontSize(Math.round(12.5 * L.ui));
     this.status.setPosition(L.cx, L.y + 150 * L.ui).setFontSize(Math.round(11 * L.ui));
 
     const bw = Math.min(300 * L.ui, L.iw - 40 * L.ui);
@@ -151,17 +144,12 @@ export class LeaderboardScene extends Phaser.Scene {
     this.backBtn.setPosition(L.cx, L.y + L.ih - bh / 2 - 4 * L.ui).setSize(bw, bh);
     this.refreshBtn.setPosition(L.cx, L.y + L.ih - bh * 1.5 - 13 * L.ui).setSize(bw, bh);
 
-    if (store.community) {
-      drawTeamBar(
-        this.bar,
-        L.x + 18 * L.ui,
-        L.y + 84 * L.ui,
-        L.iw - 36 * L.ui,
-        16 * L.ui,
-        store.community.banks.red,
-        store.community.banks.blue,
-      );
-    }
+    // A thin rule under the header, where the team bar used to be. There are no
+    // two sides to weigh against each other any more — just a list.
+    this.bar.clear();
+    this.bar.fillStyle(C.panelEdge, 0.5);
+    this.bar.fillRect(L.x + 18 * L.ui, L.y + 84 * L.ui, L.iw - 36 * L.ui, 1.5 * L.ui);
+
     this.renderRows();
   }
 }

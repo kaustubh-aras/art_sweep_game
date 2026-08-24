@@ -1,5 +1,12 @@
 # Clockshot — Architecture, Design Notes & Growth Plan
 
+> ⚠️ **Sections 1–17 describe the previous game.** Clockshot has since been
+> rebuilt as a single-player grappling time trial — no teams, no shared banks,
+> no community war. **Read [§18](#18--the-time-trial-rebuild) first**; treat
+> everything before it as history, still accurate about the architecture
+> (rounds, the trust model, arenas, the Content-Length fix) but not about the
+> gameplay or the scoring.
+>
 > **What this document is.** A complete description of the game as it exists in
 > this repository today, followed by concrete, prioritised advice on improving
 > and scaling it. Written from a full source read, a module-reachability trace
@@ -35,6 +42,8 @@
 15. [Appendix: running it locally](#15--appendix-running-it-locally)
 16. [The simplification pass](#16--the-simplification-pass)
 17. [Arenas and derived tuning](#17--arenas-and-derived-tuning)
+18. **[The time-trial rebuild](#18--the-time-trial-rebuild)** ← current game
+19. **[Instant restart and checkpoints](#19--instant-restart-and-checkpoints)**
 
 ---
 
@@ -1195,3 +1204,173 @@ Two findings worth recording:
 were played in a browser against the local server. The dev harness gained a
 `CLOCKSHOT_TIME_OFFSET` env var so a server can be stood up inside a specific
 round — which is how each arena was visited without waiting for its turn.
+
+---
+
+## 18 · The time-trial rebuild
+
+The community war is gone. Clockshot is now a single-player grappling time
+trial with a leaderboard.
+
+### 18.1 The game
+
+You start with **10 seconds**. The clock is frozen until your first input, then
+drains continuously. Clock pickups put seconds back on; spikes and enemies take
+them off. **Reach the goal before it hits zero.**
+
+A run therefore has no fixed length — a good player's run lasts *longer*, which
+is the exact inverse of the 30-second timer it replaced.
+
+| Scores | |
+|---|---|
+| Reaching the goal | 500 |
+| Each **distinct** anchor swung from | 25 |
+| Each whole second left on the clock | 100 |
+
+Not reaching the goal scores **nothing**. The run is one question and a near
+miss is still a miss; runs are short and restarting is instant, so a zero costs
+about fifteen seconds.
+
+Anchors are counted distinct on purpose. Paying per *grapple* would make
+swinging back and forth on one hook the best strategy in the game — the exact
+opposite of the route-finding this is meant to reward. The two scoring terms
+also pull against each other: covering more of the arena pays, but so does
+arriving early.
+
+### 18.2 What went
+
+- **Teams.** `Team`, `teamColor`, `teamName`, `TeamScene`, team banks,
+  `addToBank`, the bank-delta storage, lead-change-by-team. 134 references.
+- **The community battle.** `DashboardScene`, `drawTeamBar`, the shared banks,
+  `STARTING_BANK`, stealing, the `enemy` pickup kind.
+- **Jump.** No jump pad, no coyote time, no jump buffer, no variable-height cut.
+  Three inputs: `←`, `→`, `GRAPPLE`.
+- **Defect 2 with it.** The `addToBank` race documented in §10 no longer exists,
+  because banks no longer exist. It was never fixed; it was deleted.
+
+### 18.3 What arrived
+
+- **A goal** in every arena, far from the spawn, with tests asserting it is
+  reachable, inside the world, off the spikes, and has an anchor within grapple
+  range.
+- **Time as fuel** — `START_TIME_MS`, `TIME_GAIN`, `TIME_LOSS`, and a run whose
+  length is emergent rather than fixed.
+- **A points leaderboard** — a sorted set keyed on each player's *best* run in
+  the window, so ranking needs no separate pass and a worse run can never
+  displace a better one.
+- **`plausibleClock`** — leftover time can never exceed the starting tank plus
+  what was collected, less what the hits took.
+
+### 18.4 Bugs the playtest caught
+
+Four, none of which any test would have found:
+
+1. **The ring was red for the entire run.** `WARNING_MS` was 10s, which was
+   right for a fixed 30-second timer and exactly wrong for a 10-second tank —
+   the urgency warning was permanently on, so it meant nothing. Now 3s.
+2. **The anchor counter never updated.** `updateHudText()` was only called from
+   the code that touches the clock, and grabbing an anchor does not. It read
+   "0 anchors" for entire runs.
+3. **Hold-to-grapple did not retry.** The grab was edge-triggered on the press,
+   so holding the button through the moment an anchor came into range did
+   nothing and read as a dead button. Fatal in a game where the rope is the only
+   verb. Holding now keeps trying.
+4. **`plausibleClock` used wall time.** It compared leftover clock against how
+   long the run had been *open*, but the clock is frozen before the first input
+   and again while paused — so wall-elapsed always exceeds clock-elapsed, and
+   every honest run that paused to read the screen was flagged as adjusted. The
+   check is now purely about the budget. `MAX_RUN_MS` still bounds how long a
+   run may stay open.
+
+### 18.5 A trap worth writing down
+
+Twice in this session a **stale dev server held port 39700**, so a freshly built
+one failed to bind and died silently — and the browser was talking to old code
+the whole time. It cost a wrong diagnosis both times: once a "missing"
+`arenaIndex`, once an `adjusted` flag that the logic provably could not set.
+
+`pkill -f "dist/devserver"` does **not** reliably kill a server started as a
+tracked background task. Before trusting any playtest:
+
+```bash
+netstat -ano | grep ":39700.*LISTENING" || echo "port free"
+```
+
+If it is held, stop the task properly, confirm the port is free, *then* start.
+
+### 18.6 Verification
+
+`npm run typecheck` clean on both projects; **133 tests pass**, rewritten from
+scratch for the new game (the previous 135 tested teams and banks and were
+deleted). The full loop was then played in a browser against a genuinely fresh
+server: menu → PLAY → clock frozen at 10.0 → first input starts the drain →
+pickups push it back up to 14.4 → grapple attaches and the HUD counts anchors →
+out of time → results → posted, with `adjusted: false`.
+
+### 18.7 Still open
+
+**How long a leaderboard window should last.** Parked deliberately. It is still
+`ROUND_MS` (10 minutes) because that machinery already works and self-expires,
+but nothing else assumes that value — the window is derived from the constant
+rather than stored, so changing it moves the whole system. The trade is that a
+short window keeps a race winnable for a newcomer while a long one makes a score
+mean more.
+
+---
+
+## 19 · Instant restart and checkpoints
+
+### 19.1 Dying costs a screen, not a run
+
+Running out of time no longer goes to the results screen. `outOfTime()` restarts
+the scene directly, after a 220ms fade — long enough to read the word, no longer.
+
+The reasoning is simply that a failed run scores **nothing**, so there is nothing
+to post and nothing to read. The results screen was pure friction between the
+player and the retry they already wanted. The run is never submitted, so the
+rate limiter never fires either — retries really are instant.
+
+One case still ends the attempt for good: a run open longer than `MAX_RUN_MS`
+(5 min) will be refused by the server whatever happens next, so `abandon()` sends
+it to the results screen rather than letting the player keep trying for nothing.
+
+### 19.2 A restart resumes the run, it does not start a new one
+
+This is the part worth being careful about. A restart carries across:
+
+- **the armed checkpoints** and which one to return to,
+- **the anchors already swung from** — the score pays per distinct anchor, and
+  resetting them would quietly rob a player of work they had already done,
+- **the tally** (clocks, goldens, hits).
+
+Pickups *do* reset, which sounds farmable and is not — see below.
+
+### 19.3 Checkpoints arm exactly once
+
+A checkpoint records where you were and what your clock read **the first time
+you touch it**, and re-touching is ignored.
+
+That single rule is what closes the exploit. If a checkpoint took your *current*
+clock every time you passed it, the optimal play would be: collect a fat clock,
+walk back, re-arm at 20 seconds, die on purpose, repeat. Freezing the recorded
+value means restarting always returns you to the *same* clock, so dying can never
+bank you time — and that in turn is why pickups are free to reset.
+
+Restarts are floored at `CHECKPOINT_MIN_MS` (5s). Passing a checkpoint on fumes
+would otherwise drop you into a loop you cannot escape.
+
+### 19.4 The tests caught two bad placements
+
+`tests/arena.test.ts` gained three assertions per arena: checkpoints sit between
+spawn and goal, never inside a spike strip, and always have an anchor in grapple
+range. You restart *standing* on a checkpoint, so one beside a hazard would take
+the clock straight back off you, and one with no rope nearby would strand you.
+
+Two of the placements I had just written failed immediately — `880,1320` in the
+Gantry (20px from a spike strip) and `330,1210` in the Well (hard against one).
+Both were moved to hazard-free platforms.
+
+**142 tests pass**; typecheck clean on both projects. Verified in a browser:
+checkpoint flags render distinctly from pickups, the ring turns red below 3s, and
+running out of time drops straight back to spawn at a full 10.0 with no screen in
+between.

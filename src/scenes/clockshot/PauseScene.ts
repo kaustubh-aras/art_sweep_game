@@ -2,14 +2,13 @@ import Phaser from 'phaser';
 import { C, FONT } from '@/clockshot/theme';
 import { sfx } from '@/clockshot/sfx';
 import { Button, layoutOf, text } from '@/clockshot/ui';
-import { RUN_MS } from '@/shared/config';
 
 /**
  * Pause menu, drawn over a paused gameplay scene.
  *
- * The run clock is the server's and keeps running while this is open — pausing
- * cannot buy time. The screen says so plainly rather than letting a player
- * discover it by losing a run.
+ * The run clock genuinely stops here, because it is the player's fuel rather
+ * than a countdown they are racing. Pausing costs nothing, so the screen does
+ * not need to warn anybody about it.
  */
 export class PauseScene extends Phaser.Scene {
   private from = 'cs-play';
@@ -33,14 +32,7 @@ export class PauseScene extends Phaser.Scene {
 
     this.title = text(this, 0, 0, 'PAUSED', 26, C.ink);
     this.title.setStyle({ fontFamily: FONT, fontStyle: 'bold' });
-    this.warn = text(
-      this,
-      0,
-      0,
-      `The ${RUN_MS / 1000}-second run clock keeps going.\nPausing does not stop it.`,
-      12,
-      C.gold,
-    );
+    this.warn = text(this, 0, 0, 'Your clock is paused.\nTake your time.', 12, C.dim);
     this.warn.setAlign('center').setLineSpacing(5);
 
     this.resumeBtn = new Button(this, 0, 0, 'RESUME', { width: 240, filled: true, color: C.good }, () =>
