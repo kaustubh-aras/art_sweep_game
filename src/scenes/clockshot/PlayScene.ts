@@ -16,8 +16,6 @@ import { Controls } from '@/clockshot/controls';
 import { Player } from '@/clockshot/player';
 import { sfx } from '@/clockshot/sfx';
 import { store } from '@/clockshot/store';
-import { layoutOf, type Layout } from '@/clockshot/ui';
-import { RUN_MS, SCORE, type Team } from '@/shared/config';
 import { layoutOf } from '@/clockshot/ui';
 import {
   CHECKPOINT_MIN_MS,
@@ -381,31 +379,6 @@ export class PlayScene extends Phaser.Scene {
   /* HUD                                                                     */
   /* ---------------------------------------------------------------------- */
 
-  /**
-   * Where the clock dial sits, and how big it is.
-   *
-   * The dial is the one piece of the interface that has to be sized rather than
-   * simply placed: the timer sits inside it, the score under it and the pause
-   * control beside it, and all three have to clear each other on a short
-   * landscape window as well as on a tall phone. So the radius comes from the
-   * room actually available, the centre is derived from it — putting the ring's
-   * top edge just inside the safe area rather than a fixed distance from it —
-   * and everything around it is measured from the ring's edge. Placing them
-   * from a second set of literals is what let the score sit inside the arc.
-   */
-  private hudDial(L: Layout): { cx: number; cy: number; r: number; stroke: number } {
-    const stroke = Math.max(3, 4 * L.ui);
-    // A tenth of the usable height at most: a phone-sized dial on a short
-    // landscape window would take a bite out of the arena.
-    const r = Math.max(15 * L.ui, Math.min(36 * L.ui, L.ih * 0.088));
-    return { cx: L.cx, cy: L.y + r + stroke, r, stroke };
-  }
-
-  /** The largest timer that fits inside the dial. Monospace, four characters. */
-  private timerFontSize(d: { r: number; stroke: number }): number {
-    return Math.max(9, Math.round((d.r - d.stroke) * 0.78));
-  }
-
   private buildHud(): void {
     this.hudRing = this.add.graphics().setScrollFactor(0).setDepth(880);
 
@@ -470,20 +443,11 @@ export class PlayScene extends Phaser.Scene {
 
   private relayout(): void {
     const L = layoutOf(this);
-    const d = this.hudDial(L);
-
-    this.hudTimer.setPosition(d.cx, d.cy).setFontSize(this.timerFontSize(d));
-    // Clear of the ring, not inside it: the arc's outer edge is at r + stroke.
-    this.hudScore
-      .setPosition(d.cx, d.cy + d.r + d.stroke + 6 * L.ui)
-      .setFontSize(Math.round(15 * L.ui));
-    // Level with the middle of the dial, and never wide enough to reach it.
-    this.hudTeam
-      .setPosition(L.x, d.cy)
-      .setFontSize(Math.round(12 * L.ui))
-      .setWordWrapWidth(Math.max(0, d.cx - d.r - d.stroke - 10 * L.ui - L.x));
+    this.hudTimer.setPosition(L.cx, L.y + 30 * L.ui).setFontSize(Math.round(30 * L.ui));
+    this.hudScore.setPosition(L.cx, L.y + 54 * L.ui).setFontSize(Math.round(17 * L.ui));
+    this.hudTeam.setPosition(L.x, L.y + 22 * L.ui).setFontSize(Math.round(12 * L.ui));
     this.pauseZone
-      .setPosition(L.x + L.iw - this.pauseRadius(L) - 2 * L.ui, d.cy)
+      .setPosition(L.x + L.iw - 24 * L.ui, L.y + 24 * L.ui)
       .setSize(52 * L.ui, 52 * L.ui);
 
     // Zoom so roughly the same slice of arena is visible whatever the device.
@@ -499,25 +463,18 @@ export class PlayScene extends Phaser.Scene {
     this.controls.layout(L);
   }
 
-  /** Radius of the pause control, which sits level with the dial. */
-  private pauseRadius(L: Layout): number {
-    return 20 * L.ui;
-  }
-
   private drawHudRing(remainingMs: number): void {
     const L = layoutOf(this);
-    const d = this.hudDial(L);
     const g = this.hudRing;
     g.clear();
 
-    // The pause affordance, drawn where relayout() put its hit area.
-    const pr = this.pauseRadius(L);
-    const pxc = L.x + L.iw - pr - 2 * L.ui;
-    const pyc = d.cy;
+    // The pause affordance.
+    const pxc = L.x + L.iw - 24 * L.ui;
+    const pyc = L.y + 24 * L.ui;
     g.fillStyle(C.panel, 0.85);
-    g.fillCircle(pxc, pyc, pr);
+    g.fillCircle(pxc, pyc, 20 * L.ui);
     g.lineStyle(1.5, C.panelEdge, 0.8);
-    g.strokeCircle(pxc, pyc, pr);
+    g.strokeCircle(pxc, pyc, 20 * L.ui);
     g.fillStyle(C.ink, 0.85);
     g.fillRect(pxc - 6 * L.ui, pyc - 8 * L.ui, 4 * L.ui, 16 * L.ui);
     g.fillRect(pxc + 2 * L.ui, pyc - 8 * L.ui, 4 * L.ui, 16 * L.ui);
@@ -526,13 +483,16 @@ export class PlayScene extends Phaser.Scene {
     const frac = Phaser.Math.Clamp(remainingMs / START_TIME_MS, 0, 1);
     const urgent = remainingMs <= WARNING_MS;
     const color = urgent ? C.danger : C.gold;
+    const r = 40 * L.ui;
+    const cx = L.cx;
+    const cy = L.y + 30 * L.ui;
 
-    g.lineStyle(d.stroke, C.panelEdge, 0.55);
-    g.strokeCircle(d.cx, d.cy, d.r);
+    g.lineStyle(5 * L.ui, C.panelEdge, 0.55);
+    g.strokeCircle(cx, cy, r);
     if (frac > 0) {
-      g.lineStyle(d.stroke, color, 0.95);
+      g.lineStyle(5 * L.ui, color, 0.95);
       g.beginPath();
-      g.arc(d.cx, d.cy, d.r, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2, false);
+      g.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2, false);
       g.strokePath();
     }
 

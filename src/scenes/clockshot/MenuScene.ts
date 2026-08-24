@@ -49,13 +49,19 @@ export class MenuScene extends Phaser.Scene {
 
     this.title = text(this, 0, 0, 'CLOCKSHOT', 34, C.gold);
     this.title.setStyle({ fontFamily: FONT, fontStyle: 'bold' });
-    this.tagline = text(this, 0, 0, 'Swing. Shoot. Bank seconds for your team.', 12, C.dim);
+    this.tagline = text(
+      this,
+      0,
+      0,
+      `${START_TIME_MS / 1000} seconds. Swing. Reach the goal.`,
+      12,
+      C.dim,
+    );
 
-    this.redLabel = text(this, 0, 0, 'RED 0s', 15, C.red, 'left');
-    this.blueLabel = text(this, 0, 0, '0s BLUE', 15, C.blue, 'right');
-    this.leaderLabel = text(this, 0, 0, '', 13, C.ink);
-    this.roundLabel = text(this, 0, 0, '', 13, C.dim);
-    this.prevLabel = text(this, 0, 0, '', 11, C.faint);
+    this.topLabel = text(this, 0, 0, '', 17, C.gold);
+    this.arenaLabel = text(this, 0, 0, '', 13, C.cyan);
+    this.windowLabel = text(this, 0, 0, '', 12, C.dim);
+    this.prevLabel = text(this, 0, 0, '', 10.5, C.faint);
     this.youLabel = text(this, 0, 0, '', 12, C.dim);
     this.feedHeading = text(this, 0, 0, 'LATEST', 11, C.cyan, 'left');
     this.feedLabel = text(this, 0, 0, '', 10.5, C.dim, 'left');
@@ -192,23 +198,7 @@ export class MenuScene extends Phaser.Scene {
 
     // The feed is what turns a menu into a place where other people have been.
     const lines = store.activity.slice(0, 5).map((a) => `· ${activityLine(a)}`);
-    this.feedLabel.setText(
-      lines.length > 0 ? lines.join('\n') : '· Nothing yet this round. Be the first.',
-    );
-
-    this.drawBars();
-  }
-
-  private drawBars(): void {
-    const c = store.community;
-    if (!c) return;
-    const L = layoutOf(this);
-    const w = L.iw - 36 * L.ui;
-    drawTeamBar(this.bar, L.x + 18 * L.ui, this.barY(L), w, 16 * L.ui, c.banks.red, c.banks.blue);
-  }
-
-  private barY(L: ReturnType<typeof layoutOf>): number {
-    return L.y + 96 * L.ui;
+    this.feedLabel.setText(lines.join('\n'));
   }
 
   private relayout(): void {
@@ -223,11 +213,10 @@ export class MenuScene extends Phaser.Scene {
     g.lineStyle(1.5, C.panelEdge, 0.6);
     g.strokeRoundedRect(L.x, L.y + 4 * L.ui, L.iw, panelH, 16 * L.ui);
 
-    this.leaderLabel.setPosition(L.cx, L.y + 30 * L.ui).setFontSize(Math.round(14 * L.ui));
-    this.redLabel.setPosition(L.x + 18 * L.ui, L.y + 66 * L.ui).setFontSize(Math.round(15 * L.ui));
-    this.blueLabel.setPosition(L.x + L.iw - 18 * L.ui, L.y + 66 * L.ui).setFontSize(Math.round(15 * L.ui));
-    this.roundLabel.setPosition(L.cx, L.y + 124 * L.ui).setFontSize(Math.round(12 * L.ui));
-    this.prevLabel.setPosition(L.cx, L.y + 144 * L.ui).setFontSize(Math.round(10.5 * L.ui));
+    this.topLabel.setPosition(L.cx, L.y + 36 * L.ui).setFontSize(Math.round(17 * L.ui));
+    this.arenaLabel.setPosition(L.cx, L.y + 66 * L.ui).setFontSize(Math.round(11.5 * L.ui));
+    this.windowLabel.setPosition(L.cx, L.y + 94 * L.ui).setFontSize(Math.round(12 * L.ui));
+    this.prevLabel.setPosition(L.cx, L.y + 118 * L.ui).setFontSize(Math.round(10.5 * L.ui));
 
     const titleY = L.y + panelH + 52 * L.ui;
     this.title.setPosition(L.cx, titleY).setFontSize(Math.round(34 * L.ui));
@@ -273,24 +262,9 @@ export class MenuScene extends Phaser.Scene {
       b.setSize(bw, bh).setFontSize(16 * L.ui);
     }
 
-    this.drawBars();
-  }
-
-  /**
-   * Naming the arena is what turns "a round" into a place.
-   *
-   * It is derived from the round index, so it costs nothing to show and it is
-   * the same for everyone reading the menu right now.
-   */
-  private roundLine(): string {
-    const c = store.community;
-    if (!c) return '';
-    const arena = arenaAt(arenaIndexAt(c.roundIndex));
-    return [
-      arena.name,
-      `ends in ${formatClock(store.msLeftInRound())}`,
-      `${c.players} player${c.players === 1 ? '' : 's'}`,
-    ].join('  ·  ');
+    // A proxy that did not follow the re-layout would take taps where the
+    // button no longer is.
+    this.playProxy?.sync();
   }
 
   update(): void {

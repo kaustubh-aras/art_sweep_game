@@ -3,13 +3,8 @@ import { C, FONT, hex } from '@/clockshot/theme';
 import { sfx } from '@/clockshot/sfx';
 import { activityLine, formatPoints, store } from '@/clockshot/store';
 import { api, NetError, withRetry } from '@/clockshot/net';
-<<<<<<< HEAD
-import { Button, fadeTo, layoutOf, text } from '@/clockshot/ui';
+import { Button, fadeTo, fitText, layoutOf, text } from '@/clockshot/ui';
 import { SCORE } from '@/shared/config';
-=======
-import { Button, drawTeamBar, fadeTo, fitText, layoutOf, text } from '@/clockshot/ui';
-import { SCORE, type Team } from '@/shared/config';
->>>>>>> feat/fullScreen
 import type { RunFinishResponse, RunTally } from '@/shared/api';
 import { attachTapProxy, type TapProxy } from '@/clockshot/immersive';
 
@@ -37,13 +32,10 @@ export class ResultsScene extends Phaser.Scene {
   private boardBtn!: Button;
   private menuBtn!: Button;
 
-<<<<<<< HEAD
-  /** Kept so a re-layout after the server answers can redraw from the result. */
-=======
-  /** See MenuScene: PLAY AGAIN is the other way into a run. */
+  /** Stands in for RUN AGAIN so the tap that starts a run can take the screen. */
   private playProxy: TapProxy | null = null;
 
->>>>>>> feat/fullScreen
+  /** Kept so a re-layout after the server answers can redraw from the result. */
   private result: RunFinishResponse | null = null;
   private submitting = false;
   private failed = false;
@@ -111,53 +103,6 @@ export class ResultsScene extends Phaser.Scene {
     });
 
     this.cameras.main.fadeIn(220, 7, 11, 22);
-<<<<<<< HEAD
-=======
-
-    // A first run has no side yet, so nothing is banked until the player says
-    // where it goes. Everyone else banks immediately.
-    if (this.choosing) this.askForTeam();
-    else void this.submit();
-  }
-
-  /* ---------------------------------------------------------------------- */
-  /* Choosing a side                                                         */
-  /* ---------------------------------------------------------------------- */
-
-  /**
-   * The first-run moment: the player has something in their hands before they
-   * are asked to commit to anything.
-   */
-  private askForTeam(): void {
-    const earned = this.localEarned();
-    this.heading.setText(earned > 0 ? 'WHO GETS THESE SECONDS?' : 'CHOOSE A SIDE');
-    this.statusText
-      .setText('your seconds go into that team’s shared clock')
-      .setColor(hex(C.dim));
-    this.showChoice(true);
-  }
-
-  private showChoice(on: boolean): void {
-    this.redBtn.setVisible(on);
-    this.blueBtn.setVisible(on);
-    for (const b of [this.againBtn, this.boardBtn, this.menuBtn, this.shareBtn]) {
-      b.setVisible(!on);
-    }
-    // Hiding the button has to hide what sits on top of it, or the team choice
-    // is taken through an invisible stand-in for a button that is not there.
-    this.playProxy?.sync();
-  }
-
-  private chooseTeam(team: Team): void {
-    if (!this.choosing) return;
-    this.choosing = false;
-    this.team = team;
-    store.setTeam(team);
-    this.showChoice(false);
-    this.heading.setText('RUN COMPLETE');
-    this.renderLocal();
-    this.relayout();
->>>>>>> feat/fullScreen
     void this.submit();
   }
 
@@ -315,40 +260,21 @@ export class ResultsScene extends Phaser.Scene {
         .map((a) => `· ${activityLine(a)}`)
         .join('\n'),
     );
-<<<<<<< HEAD
-=======
 
     this.fitLabels();
-
-    if (r.adjusted) {
-      // Being open about a correction beats silently changing someone's score.
-      this.statusText.setText('banked (score adjusted by the server)').setColor(hex(C.gold));
-    }
-
-    this.drawBar();
   }
 
   /**
-   * Sizes the two labels whose width the server decides.
+   * Sizes the one label whose width the server decides.
    *
-   * Called from the layout *and* from every render, because the text arrives
-   * after the screen is first laid out: two four-figure banks, or a round total
-   * beside a community rank, are wider than the panel on a phone, and a line
-   * that runs off the edge of the panel it sits in reads as a bug.
+   * Called from the layout *and* from the render, because the text arrives
+   * after the screen is first laid out: a four-figure best beside a rank and a
+   * run count is wider than the panel on a phone, and a line that runs off the
+   * edge of the panel it sits in reads as a bug.
    */
   private fitLabels(): void {
     const L = layoutOf(this);
-    const inner = L.iw - 36 * L.ui;
-    fitText(this.communityText, 12 * L.ui, inner);
-    fitText(this.rankText, 11 * L.ui, inner);
-  }
-
-  private drawBar(): void {
-    const c = this.result?.community ?? store.community;
-    if (!c) return;
-    const L = layoutOf(this);
-    drawTeamBar(this.bar, L.x + 18 * L.ui, L.y + 176 * L.ui, L.iw - 36 * L.ui, 14 * L.ui, c.banks.red, c.banks.blue);
->>>>>>> feat/fullScreen
+    fitText(this.standingText, 11 * L.ui, L.iw - 36 * L.ui);
   }
 
   private relayout(): void {
@@ -358,18 +284,10 @@ export class ResultsScene extends Phaser.Scene {
     g.fillStyle(C.panel, 0.55);
     g.fillRoundedRect(L.x, L.y + 96 * L.ui, L.iw, 92 * L.ui, 14 * L.ui);
 
-<<<<<<< HEAD
     this.heading.setPosition(L.cx, L.y + 34 * L.ui).setFontSize(Math.round(20 * L.ui));
     this.scoreText.setPosition(L.cx, L.y + 76 * L.ui).setFontSize(Math.round(40 * L.ui));
-    this.standingText.setPosition(L.cx, L.y + 152 * L.ui).setFontSize(Math.round(11 * L.ui));
-=======
-    this.heading.setPosition(L.cx, L.y + 30 * L.ui).setFontSize(Math.round(20 * L.ui));
-    this.scoreText.setPosition(L.cx, L.y + 66 * L.ui).setFontSize(Math.round(38 * L.ui));
-
-    this.communityText.setPosition(L.cx, L.y + 126 * L.ui);
-    this.rankText.setPosition(L.cx, L.y + 200 * L.ui);
+    this.standingText.setPosition(L.cx, L.y + 152 * L.ui);
     this.fitLabels();
->>>>>>> feat/fullScreen
 
     const bw = Math.min(300 * L.ui, L.iw - 40 * L.ui);
     const bh = 52 * L.ui;
@@ -405,31 +323,19 @@ export class ResultsScene extends Phaser.Scene {
     by -= bh + gap;
     this.againBtn.setPosition(L.cx, by).setSize(bw, bh);
 
-<<<<<<< HEAD
-    this.statusText.setPosition(L.cx, by - bh / 2 - 16 * L.ui).setFontSize(Math.round(11 * L.ui));
-=======
-    // The two side buttons share the bottom of the stack when they are up, so
-    // the choice sits exactly where the thumb already is.
-    const cbh = 58 * L.ui;
-    let cy = L.y + L.ih - cbh / 2 - 4 * L.ui;
-    this.blueBtn.setPosition(L.cx, cy).setSize(bw, cbh).setFontSize(18 * L.ui);
-    cy -= cbh + 12 * L.ui;
-    this.redBtn.setPosition(L.cx, cy).setSize(bw, cbh).setFontSize(18 * L.ui);
-
-    const statusY = this.choosing ? cy - cbh / 2 - 16 * L.ui : by - bh / 2 - 16 * L.ui;
-    // The status line is the only label that can be handed a whole sentence —
-    // a server error, or the share text when the clipboard is blocked — so it
-    // wraps instead of running off both edges of the screen.
+    // The status line is the only label that can be handed a whole sentence — a
+    // server error, say — so it wraps instead of running off both edges of the
+    // screen.
     this.statusText
-      .setPosition(L.cx, statusY)
+      .setPosition(L.cx, by - bh / 2 - 16 * L.ui)
       .setOrigin(0.5, 1)
       .setFontSize(Math.round(11 * L.ui))
       .setAlign('center')
       .setLineSpacing(3)
       .setWordWrapWidth(L.iw - 24 * L.ui);
 
+    // A proxy that did not follow the re-layout would take taps where the
+    // button no longer is.
     this.playProxy?.sync();
-    this.drawBar();
->>>>>>> feat/fullScreen
   }
 }
