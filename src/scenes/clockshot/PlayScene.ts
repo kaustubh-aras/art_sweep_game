@@ -13,10 +13,12 @@ import { C, FONT, hex } from '@/clockshot/theme';
 import { GRAVITY, WARNING_MS } from '@/clockshot/tuning';
 import { TEX, bakeTextures } from '@/clockshot/textures';
 import { Controls } from '@/clockshot/controls';
+import { TimerHud } from '@/clockshot/timerHud';
 import { Player } from '@/clockshot/player';
+import type { Anchor } from '@/clockshot/arena';
 import { sfx } from '@/clockshot/sfx';
 import { store } from '@/clockshot/store';
-import { layoutOf } from '@/clockshot/ui';
+import { layoutOf, type Layout } from '@/clockshot/ui';
 import {
   CHECKPOINT_MIN_MS,
   MAX_RUN_MS,
@@ -106,10 +108,10 @@ export class PlayScene extends Phaser.Scene {
   private lastTickSecond = -1;
 
   // HUD
-  private hudTimer!: Phaser.GameObjects.Text;
+  private timer!: TimerHud;
   private hudScore!: Phaser.GameObjects.Text;
-  private hudTeam!: Phaser.GameObjects.Text;
-  private hudRing!: Phaser.GameObjects.Graphics;
+  /** The pause affordance. Static, so it is painted on layout and left alone. */
+  private hudChrome!: Phaser.GameObjects.Graphics;
   private pauseZone!: Phaser.GameObjects.Zone;
 
   /**
@@ -380,23 +382,12 @@ export class PlayScene extends Phaser.Scene {
   /* ---------------------------------------------------------------------- */
 
   private buildHud(): void {
-    this.hudRing = this.add.graphics().setScrollFactor(0).setDepth(880);
-
-    this.hudTimer = this.add
-      .text(0, 0, '30.0', { fontFamily: FONT, fontSize: '34px', color: hex(C.gold) })
-      .setOrigin(0.5)
-      .setScrollFactor(0)
-      .setDepth(882);
+    this.hudChrome = this.add.graphics().setScrollFactor(0).setDepth(880);
+    this.timer = new TimerHud(this, START_TIME_MS);
 
     this.hudScore = this.add
-      .text(0, 0, '+0s', { fontFamily: FONT, fontSize: '20px', color: hex(C.ink) })
+      .text(0, 0, '0 anchors', { fontFamily: FONT, fontSize: '20px', color: hex(C.dim) })
       .setOrigin(0.5, 0)
-      .setScrollFactor(0)
-      .setDepth(882);
-
-    this.hudTeam = this.add
-      .text(0, 0, '', { fontFamily: FONT, fontSize: '13px', color: hex(C.dim) })
-      .setOrigin(0, 0.5)
       .setScrollFactor(0)
       .setDepth(882);
 
@@ -422,10 +413,9 @@ export class PlayScene extends Phaser.Scene {
 
   private uiObjects(): Phaser.GameObjects.GameObject[] {
     return [
-      this.hudRing,
-      this.hudTimer,
+      this.hudChrome,
+      ...this.timer.objects(),
       this.hudScore,
-      this.hudTeam,
       this.pauseZone,
       ...this.controls.objects(),
     ];
@@ -443,9 +433,9 @@ export class PlayScene extends Phaser.Scene {
 
   private relayout(): void {
     const L = layoutOf(this);
-    this.hudTimer.setPosition(L.cx, L.y + 30 * L.ui).setFontSize(Math.round(30 * L.ui));
-    this.hudScore.setPosition(L.cx, L.y + 54 * L.ui).setFontSize(Math.round(17 * L.ui));
-    this.hudTeam.setPosition(L.x, L.y + 22 * L.ui).setFontSize(Math.round(12 * L.ui));
+    this.timer.layout(L);
+    this.hudScore.setPosition(L.cx, L.y + 76 * L.ui).setFontSize(Math.round(13 * L.ui));
+    this.drawChrome(L);
     this.pauseZone
       .setPosition(L.x + L.iw - 24 * L.ui, L.y + 24 * L.ui)
       .setSize(52 * L.ui, 52 * L.ui);
@@ -463,12 +453,17 @@ export class PlayScene extends Phaser.Scene {
     this.controls.layout(L);
   }
 
-  private drawHudRing(remainingMs: number): void {
-    const L = layoutOf(this);
-    const g = this.hudRing;
+  /**
+   * The static furniture: the pause affordance, and nothing else.
+   *
+   * The clock used to share this Graphics, which meant repainting the pause
+   * button sixty times a second to move an arc. It is painted on layout now and
+   * then left alone; `TimerHud` owns everything that actually changes.
+   */
+  private drawChrome(L: Layout): void {
+    const g = this.hudChrome;
     g.clear();
 
-    // The pause affordance.
     const pxc = L.x + L.iw - 24 * L.ui;
     const pyc = L.y + 24 * L.ui;
     g.fillStyle(C.panel, 0.85);
@@ -478,25 +473,6 @@ export class PlayScene extends Phaser.Scene {
     g.fillStyle(C.ink, 0.85);
     g.fillRect(pxc - 6 * L.ui, pyc - 8 * L.ui, 4 * L.ui, 16 * L.ui);
     g.fillRect(pxc + 2 * L.ui, pyc - 8 * L.ui, 4 * L.ui, 16 * L.ui);
-
-    // The run clock as an arc — colour carries the urgency.
-    const frac = Phaser.Math.Clamp(remainingMs / START_TIME_MS, 0, 1);
-    const urgent = remainingMs <= WARNING_MS;
-    const color = urgent ? C.danger : C.gold;
-    const r = 40 * L.ui;
-    const cx = L.cx;
-    const cy = L.y + 30 * L.ui;
-
-    g.lineStyle(5 * L.ui, C.panelEdge, 0.55);
-    g.strokeCircle(cx, cy, r);
-    if (frac > 0) {
-      g.lineStyle(5 * L.ui, color, 0.95);
-      g.beginPath();
-      g.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2, false);
-      g.strokePath();
-    }
-
-    this.hudTimer.setColor(hex(color));
   }
 
   /* ---------------------------------------------------------------------- */
@@ -670,7 +646,9 @@ export class PlayScene extends Phaser.Scene {
 
     this.updateEnemies(delta);
     this.drawRope();
-    this.highlightAnchor();
+    // The hook pad lights only when the hook could really catch something, so
+    // it has to be told what the arena is offering this frame.
+    this.controls.setGrappleState(this.highlightAnchor() !== null, this.player.attached);
     this.pulseGoal();
 
     // The anchor count changes on a grab, which is nowhere near the code that
@@ -680,8 +658,8 @@ export class PlayScene extends Phaser.Scene {
 
     if (this.player.y > this.killY) this.onFall();
 
-    this.hudTimer.setText((this.timeMs / 1000).toFixed(1));
-    this.drawHudRing(this.timeMs);
+    this.timer.update(this.timeMs);
+    this.controls.tick(this.time.now);
   }
 
   /**
@@ -755,7 +733,7 @@ export class PlayScene extends Phaser.Scene {
   }
 
   /** Shows which anchor a grapple would take, so the auto-aim is never a guess. */
-  private highlightAnchor(): void {
+  private highlightAnchor(): Anchor | null {
     const target = this.player.attached
       ? this.player.anchor
       : this.player.findAnchor(this.arena.anchors);
@@ -766,6 +744,7 @@ export class PlayScene extends Phaser.Scene {
       img.setScale(isTarget ? 1.35 : 1);
       img.setAlpha(isTarget ? 1 : 0.55);
     }
+    return target;
   }
 
   /**

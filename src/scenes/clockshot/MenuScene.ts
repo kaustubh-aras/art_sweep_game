@@ -39,8 +39,23 @@ export class MenuScene extends Phaser.Scene {
   private poll!: Phaser.Time.TimerEvent;
   private starting = false;
 
+  /**
+   * Why the player is looking at a menu at all.
+   *
+   * TAKE THE RUN goes straight into a run, so arriving here means something
+   * turned one down — not being logged in, or having taken too many too fast.
+   * The server's own wording is carried across, because "log in to Reddit to
+   * play" and "you have run out of runs for now" are different problems and a
+   * silent menu explains neither.
+   */
+  private notice: string | null = null;
+
   constructor() {
     super('cs-menu');
+  }
+
+  init(data?: { notice?: string }): void {
+    this.notice = data?.notice ?? null;
   }
 
   create(): void {
@@ -129,6 +144,8 @@ export class MenuScene extends Phaser.Scene {
   private async onPlay(): Promise<void> {
     if (this.starting) return;
     this.starting = true;
+    // Whatever turned the last run down, the player is past it now.
+    this.notice = null;
     this.playBtn.setCaption('STARTING…').setEnabled(false);
 
     try {
@@ -195,6 +212,10 @@ export class MenuScene extends Phaser.Scene {
         .setColor(hex(store.best > 0 ? C.gold : C.dim));
       this.playBtn.setCaption('PLAY').setEnabled(!this.starting);
     }
+
+    // A refusal outranks the player's own standing: it is the reason this
+    // screen is on at all, and it is what they have to act on.
+    if (this.notice) this.youLabel.setText(this.notice).setColor(hex(C.gold));
 
     // The feed is what turns a menu into a place where other people have been.
     const lines = store.activity.slice(0, 5).map((a) => `· ${activityLine(a)}`);

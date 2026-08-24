@@ -1,4 +1,5 @@
 import { api, NetError } from './net';
+import { openGate } from './gate';
 import { requestFullScreen } from './immersive';
 import { sfx } from './sfx';
 import { formatPoints, store } from './store';
@@ -37,7 +38,12 @@ const PIPS = 5;
  */
 export async function mountSplash(): Promise<void> {
   const root = document.getElementById('splash');
-  if (!root) return;
+  if (!root) {
+    // No card means no tap to wait for, and the game must never be left behind
+    // a gate nobody can open.
+    openGate();
+    return;
+  }
 
   const rows = await loadData();
   const open = renderCard(root, rows);
@@ -114,6 +120,7 @@ function renderCard(root: HTMLElement, rows: LeaderRow[]): Promise<void> {
   return new Promise<void>((resolve) => {
     const cta = root.querySelector<HTMLButtonElement>('.card-cta');
     if (!cta) {
+      openGate();
       resolve();
       return;
     }
@@ -126,6 +133,9 @@ function renderCard(root: HTMLElement, rows: LeaderRow[]): Promise<void> {
         requestFullScreen(event);
         sfx.unlock();
         cta.blur();
+        // The run is asked for on the tap, not after the card has finished
+        // fading: the request and the fade then overlap instead of queueing.
+        openGate();
         resolve();
       },
       { once: true },
