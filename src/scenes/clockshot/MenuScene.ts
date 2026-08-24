@@ -4,6 +4,7 @@ import { sfx } from '@/clockshot/sfx';
 import { activityLine, store, formatClock } from '@/clockshot/store';
 import { Button, drawTeamBar, fadeTo, layoutOf, text } from '@/clockshot/ui';
 import { api, NetError } from '@/clockshot/net';
+import { attachTapProxy, type TapProxy } from '@/clockshot/immersive';
 import { arenaAt } from '@/clockshot/arena';
 import { arenaIndexAt } from '@/shared/config';
 
@@ -32,6 +33,9 @@ export class MenuScene extends Phaser.Scene {
   private howBtn!: Button;
   private dashBtn!: Button;
   private soundBtn!: Button;
+
+  /** Present only inside a Reddit post, where PLAY also asks for full screen. */
+  private playProxy: TapProxy | null = null;
 
   private unsubscribe: (() => void) | null = null;
   private poll!: Phaser.Time.TimerEvent;
@@ -80,6 +84,10 @@ export class MenuScene extends Phaser.Scene {
     this.unsubscribe = store.onChange(() => this.render());
     this.scale.on(Phaser.Scale.Events.RESIZE, this.relayout, this);
 
+    // The one tap a player is guaranteed to make before a run is PLAY, so that
+    // is the tap that carries the request to take over the screen.
+    this.playProxy = attachTapProxy(this, this.playBtn);
+
     // Keep the battle live while the player sits on the menu.
     this.poll = this.time.addEvent({
       delay: 12_000,
@@ -90,6 +98,7 @@ export class MenuScene extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.unsubscribe?.();
       this.poll.remove();
+      this.playProxy?.destroy();
       this.scale.off(Phaser.Scale.Events.RESIZE, this.relayout, this);
     });
 
@@ -262,6 +271,7 @@ export class MenuScene extends Phaser.Scene {
       b.setSize(bw, bh).setFontSize(16 * L.ui);
     }
 
+    this.playProxy?.sync();
     this.drawBars();
   }
 

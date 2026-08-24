@@ -6,6 +6,7 @@ import { api, NetError, withRetry } from '@/clockshot/net';
 import { Button, drawTeamBar, fadeTo, layoutOf, text } from '@/clockshot/ui';
 import { SCORE, type Team } from '@/shared/config';
 import type { RunFinishResponse, RunTally } from '@/shared/api';
+import { attachTapProxy, type TapProxy } from '@/clockshot/immersive';
 
 /**
  * Run results, and the moment the run actually counts.
@@ -39,6 +40,9 @@ export class ResultsScene extends Phaser.Scene {
   private redBtn!: Button;
   private blueBtn!: Button;
   private choosing = false;
+
+  /** See MenuScene: PLAY AGAIN is the other way into a run. */
+  private playProxy: TapProxy | null = null;
 
   private result: RunFinishResponse | null = null;
   private submitting = false;
@@ -110,8 +114,10 @@ export class ResultsScene extends Phaser.Scene {
     this.renderLocal();
     this.relayout();
     this.scale.on(Phaser.Scale.Events.RESIZE, this.relayout, this);
+    this.playProxy = attachTapProxy(this, this.againBtn);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.scale.off(Phaser.Scale.Events.RESIZE, this.relayout, this);
+      this.playProxy?.destroy();
     });
 
     this.cameras.main.fadeIn(220, 7, 11, 22);
@@ -145,6 +151,9 @@ export class ResultsScene extends Phaser.Scene {
     for (const b of [this.againBtn, this.boardBtn, this.menuBtn, this.shareBtn]) {
       b.setVisible(!on);
     }
+    // Hiding the button has to hide what sits on top of it, or the team choice
+    // is taken through an invisible stand-in for a button that is not there.
+    this.playProxy?.sync();
   }
 
   private chooseTeam(team: Team): void {
@@ -436,6 +445,7 @@ export class ResultsScene extends Phaser.Scene {
     const statusY = this.choosing ? cy - cbh / 2 - 16 * L.ui : by - bh / 2 - 16 * L.ui;
     this.statusText.setPosition(L.cx, statusY).setFontSize(Math.round(11 * L.ui));
 
+    this.playProxy?.sync();
     this.drawBar();
   }
 }

@@ -3,6 +3,11 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
+    // `@devvit/web/client` resolves to a deliberate "you imported client
+    // code on the server" stub under every other condition; the browser
+    // condition is what points tsc at the real web-view API surface, the
+    // same one Vite picks for this project's client bundle.
+    "customConditions": ["browser"],
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,

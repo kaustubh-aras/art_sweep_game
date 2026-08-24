@@ -77,6 +77,25 @@
         max-height: 100%;
       }
 
+      /* A transparent stand-in for a button drawn on the canvas.
+         Reddit only shows a post full screen when asked during a real DOM
+         click, and a tap on the canvas never produces one — see
+         src/clockshot/immersive.ts, which positions and drives these. */
+      .tap-proxy {
+        position: absolute;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: transparent;
+        font: inherit;
+        -webkit-appearance: none;
+        appearance: none;
+        touch-action: none;
+        cursor: pointer;
+        z-index: 3;
+      }
+
       /* Zero-size probe: the only way to read env(safe-area-inset-*) from JS.
          The layout manager reads its computed padding every resize. */
       #safe-probe {

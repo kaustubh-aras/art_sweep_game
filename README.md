@@ -69,6 +69,33 @@ The grapple auto-targets: the anchor it would take is always highlighted, so
 aiming is never a guess. The rope shortens while held, so a swing gains height
 instead of decaying.
 
+## Full-screen play
+
+A run takes over the screen. Reddit presents a post's web view inline by default
+— a fixed-height panel in a feed — and will expand it to a full-screen modal on
+request, but only during a **trusted DOM click**. A game drawn entirely on a
+`<canvas>` never sees one: Phaser cancels the touch events that would produce
+it, which is exactly what stops a swing from scrolling the page. Turning that
+off is worse than the problem — a phone then follows each tap with emulated
+mouse events, and Phaser reads those as a second press, so every menu button
+fires twice.
+
+So `src/clockshot/immersive.ts` takes the click where it can be had: a
+transparent DOM button laid over PLAY, and over PLAY AGAIN. It swallows the
+pointer events Phaser would otherwise double-handle, drives the canvas button's
+own pressed state and action so nothing on screen behaves differently, and
+carries the request for full screen on the real click underneath.
+
+The request deliberately names no entrypoint. That is what tells the client to
+expand the web view it already has rather than load one: naming an entrypoint
+means "reload", which would restart the game at the menu on the very tap that
+asked to play.
+
+Staying inline is a supported outcome rather than a failure. Outside a Reddit
+web view — local play, the dev server, the tests — nothing is added to the page
+at all, and on a client with no expanded presentation the refusal is logged and
+the run goes ahead in the panel.
+
 ## Technology
 
 - **Phaser 3.90** — Arcade Physics for platforming; the grapple is a
@@ -85,7 +112,7 @@ instead of decaying.
 ```bash
 npm install
 npm run typecheck     # client + server projects
-npm test              # 93 tests
+npm test              # 155 tests
 npm run build         # typecheck + client bundle + server bundle
 ```
 
@@ -182,14 +209,16 @@ all intentional:
 
 ## Testing
 
-93 automated tests, all passing. The API tests import `src/server/index.ts`
+155 automated tests, all passing. The API tests import `src/server/index.ts`
 itself and drive it over real HTTP against an in-memory Redis.
 
 | Suite | Tests | Covers |
 |---|---|---|
 | `tests/community.test.ts` | 26 | round derivation, atomic banks, negative clamping, leaderboards, activity trimming, round transitions, TTLs |
-| `tests/runs.test.ts` | 33 | run lifecycle, duplicate claiming under concurrency, timing windows, rate limits, tally sanitizing, scoring caps |
-| `tests/api.test.ts` | 34 | logged-out viewers, team locking, full runs, concurrent submissions, expiry, round rollover, malformed bodies, Redis failure |
+| `tests/runs.test.ts` | 34 | run lifecycle, duplicate claiming under concurrency, timing windows, rate limits, tally sanitizing, scoring caps |
+| `tests/api.test.ts` | 42 | logged-out viewers, team locking, full runs, concurrent submissions, expiry, round rollover, malformed bodies, Redis failure |
+| `tests/arena.test.ts` | 37 | arena selection per round, every arena reachable and completable, seeded layout, the seeded rng |
+| `tests/immersive.test.ts` | 16 | the full-screen request and what it puts on the wire, and the tap proxy that carries it |
 
 Manually verified in a real browser (Playwright driving Chrome, including
 multi-touch via CDP): boot, team selection, a complete 30-second run with

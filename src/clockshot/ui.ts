@@ -135,22 +135,12 @@ export class Button {
       .setOrigin(0.5)
       .setInteractive({ useHandCursor: true });
 
-    this.zone.on('pointerdown', () => {
-      if (!this.enabled) return;
-      this.down = true;
-      this.redraw();
-    });
-    const up = (): void => {
-      this.down = false;
-      this.redraw();
-    };
+    this.zone.on('pointerdown', () => this.setPressed(true));
     this.zone.on('pointerup', () => {
-      if (!this.enabled) return;
-      up();
-      sfx.uiSelect();
-      this.onClick();
+      this.setPressed(false);
+      this.click();
     });
-    this.zone.on('pointerout', up);
+    this.zone.on('pointerout', () => this.setPressed(false));
 
     this.container = scene.add.container(x, y, [this.gfx, this.label, this.zone]);
     this.redraw();
@@ -176,6 +166,57 @@ export class Button {
     g.strokeRoundedRect(-hw, -hh, this.w, this.h, 12);
 
     this.label.setAlpha(alpha);
+  }
+
+  /**
+   * Presses or releases the button without a pointer of Phaser's own.
+   *
+   * A tap can arrive from outside Phaser — see `attachTapProxy` in
+   * `immersive.ts` — and a button that does not visibly respond to a press
+   * reads as broken.
+   */
+  setPressed(on: boolean): this {
+    const next = on && this.enabled;
+    if (next === this.down) return this;
+    this.down = next;
+    this.redraw();
+    return this;
+  }
+
+  /** Fires the button's action, exactly as a tap on it would. */
+  click(): this {
+    if (!this.enabled) return this;
+    sfx.uiSelect();
+    this.onClick();
+    return this;
+  }
+
+  /**
+   * The button's rectangle in game units.
+   *
+   * Screens add their buttons straight to the scene and never scroll or zoom
+   * the camera they are drawn by, so the container's position is already the
+   * position on screen.
+   */
+  bounds(): { x: number; y: number; w: number; h: number } {
+    return {
+      x: this.container.x - this.w / 2,
+      y: this.container.y - this.h / 2,
+      w: this.w,
+      h: this.h,
+    };
+  }
+
+  get isEnabled(): boolean {
+    return this.enabled;
+  }
+
+  get isVisible(): boolean {
+    return this.container.visible;
+  }
+
+  get caption(): string {
+    return this.label.text;
   }
 
   setEnabled(on: boolean): this {
