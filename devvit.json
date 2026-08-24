@@ -22,7 +22,7 @@
     "items": [
       {
         "label": "Create a Clockshot post",
-        "description": "Start a Clockshot community time war in this subreddit.",
+        "description": "Post a Clockshot time trial — swing to the goal before the clock runs out.",
         "location": "subreddit",
         "forUserType": "moderator",
         "endpoint": "/internal/menu/create-post"
