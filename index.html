@@ -449,6 +449,35 @@
         opacity: 0.72;
       }
 
+      /* The second door. Outlined and green rather than filled and gold: the
+         run is what most readers came for, and building is the offer standing
+         quietly beside it. Green is what the menu already uses for building. */
+      .card-build {
+        display: block;
+        width: calc(100% - 32px);
+        margin: 8px 16px 0;
+        padding: 10px 12px;
+        border: 1px solid rgba(61, 255, 160, 0.4);
+        border-radius: 12px;
+        background: rgba(61, 255, 160, 0.07);
+        color: #9dffcf;
+        font-family: var(--font);
+        cursor: pointer;
+      }
+
+      .card-build:active {
+        background: rgba(61, 255, 160, 0.16);
+        transform: translateY(1px);
+      }
+
+      .card-build .cta-main {
+        font-size: 13px;
+      }
+
+      .card-build .cta-sub {
+        color: #6fd6a6;
+      }
+
       .card-foot {
         margin-top: 10px;
         margin-bottom: 14px;
@@ -482,6 +511,11 @@
         .card-cta {
           margin-top: 11px;
           padding: 11px 12px;
+        }
+
+        .card-build {
+          margin-top: 6px;
+          padding: 8px 12px;
         }
       }
     </style>

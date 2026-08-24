@@ -1,4 +1,5 @@
 import { api, NetError } from './net';
+import { choose, type Choice } from './choice';
 import { requestFullScreen } from './immersive';
 import { sfx } from './sfx';
 import { formatPoints, store } from './store';
@@ -37,7 +38,12 @@ const PIPS = 5;
  */
 export async function mountSplash(): Promise<void> {
   const root = document.getElementById('splash');
-  if (!root) return;
+  if (!root) {
+    // No card means no door to pick, and the game must never be left waiting
+    // on an answer that can no longer arrive.
+    choose('run');
+    return;
+  }
 
   const rows = await loadData();
   const open = renderCard(root, rows);
@@ -107,29 +113,48 @@ function renderCard(root: HTMLElement, rows: LeaderRow[]): Promise<void> {
         <span class="cta-sub">${START_TIME_MS / 1000} seconds on the clock</span>
       </button>
 
+      <button type="button" class="card-build">
+        <span class="cta-main">BUILD A LEVEL</span>
+        <span class="cta-sub">make an arena of your own</span>
+      </button>
+
       <p class="card-foot">${footer()}</p>
     </div>
   `;
 
   return new Promise<void>((resolve) => {
-    const cta = root.querySelector<HTMLButtonElement>('.card-cta');
-    if (!cta) {
+    const run = root.querySelector<HTMLButtonElement>('.card-cta');
+    const build = root.querySelector<HTMLButtonElement>('.card-build');
+    if (!run) {
+      choose('run');
       resolve();
       return;
     }
 
-    cta.addEventListener(
-      'click',
-      (event) => {
-        // Both of these need a click the browser itself produced, and this is
-        // the only one the game is promised.
-        requestFullScreen(event);
-        sfx.unlock();
-        cta.blur();
-        resolve();
-      },
-      { once: true },
-    );
+    /**
+     * Either door spends the same trusted click.
+     *
+     * Full screen and the audio context both need a click the browser itself
+     * produced, and the card is the only place the game is promised one — so
+     * whichever button is pressed has to buy both, not just the one that
+     * happens to start a run.
+     */
+    const open = (button: HTMLButtonElement, choice: Choice): void => {
+      button.addEventListener(
+        'click',
+        (event) => {
+          requestFullScreen(event);
+          sfx.unlock();
+          button.blur();
+          choose(choice);
+          resolve();
+        },
+        { once: true },
+      );
+    };
+
+    open(run, 'run');
+    if (build) open(build, 'build');
   });
 }
 

@@ -3,6 +3,7 @@ import { gameConfig } from './clockshot/game';
 import { initViewport } from './ui/viewport';
 import { sfx } from './clockshot/sfx';
 import { mountSplash } from './clockshot/splash';
+import { choose } from './clockshot/choice';
 
 // Single game instance. Inside Devvit Web this file is the webview entrypoint.
 const game = new Phaser.Game(gameConfig);
@@ -69,4 +70,6 @@ document.addEventListener(
 void mountSplash().catch((err: unknown) => {
   console.warn('[clockshot] splash failed', err);
   document.getElementById('splash')?.remove();
+  // The card is gone, so the door it would have asked about is answered here.
+  choose('run');
 });
