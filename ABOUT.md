@@ -44,8 +44,5 @@ it.
 
 ---
 
-**AI disclosure:** AI tools (Claude) assisted with programming, debugging. All generated output
-was reviewed, executed and tested. All art and audio is original — the
-illustrated sprites are drawn under the same texture keys the procedural
-generator uses, so the game still draws itself if an image ever fails to load,
-and every sound is synthesised at runtime.
+**AI disclosure:** AI tools Claude assisted with programming, debugging. All generated output
+was reviewed, executed and tested. All art and audio is original
