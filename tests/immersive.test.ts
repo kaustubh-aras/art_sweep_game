@@ -30,7 +30,31 @@ let post: ReturnType<typeof vi.fn>;
 let warn: ReturnType<typeof vi.fn>;
 
 function enterWebView(mode: number = INLINE): void {
-  (globalThis as { devvit?: unknown }).devvit = { webViewMode: mode, entrypoints: {}, token: 'tok' };
+  (globalThis as { devvit?: unknown }).devvit = {
+    webViewMode: mode,
+    entrypoints: { default: 'https://webview.devvit.net/index.html' },
+    token: 'tok',
+  };
+}
+
+/** The entrypoint URL a client is told to reload, as the host declares it. */
+const DEFAULT_ENTRY_URL = 'https://webview.devvit.net/index.html';
+
+/**
+ * Puts the test on the Reddit Android client.
+ *
+ * Android is the one client that cannot expand a web view in place: it builds a
+ * new one for the full-screen presentation, and a new web view with nothing to
+ * load shows Reddit's spinner over an empty post forever. The user agent is the
+ * only thing that separates it from the clients that can, so it is what the
+ * game reads and what these tests set.
+ */
+function onAndroid(): void {
+  define(
+    window.navigator,
+    'userAgent',
+    'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/126 Mobile Safari/537.36',
+  );
 }
 
 /** Every immersive-mode effect posted to the host so far. */
@@ -159,6 +183,46 @@ describe('asking for full screen', () => {
     // reload the target web view." A reload here would restart the game at the
     // menu, on the very tap that asked to play.
     expect(modeEffects()).toEqual([{ immersiveMode: IMMERSIVE, entryUrl: undefined }]);
+  });
+
+  it('names the entrypoint on Android, which cannot expand in place', () => {
+    // Android builds a second web view for the full-screen presentation rather
+    // than carrying the running one into it. Left unspecified, that new web
+    // view has no document to load and the post opens onto Reddit's spinner and
+    // stays there — the grey screen. Naming the entrypoint costs a reload and
+    // buys a post that actually opens.
+    onAndroid();
+    enterWebView();
+
+    requestFullScreen(realClick());
+
+    expect(modeEffects()).toEqual([{ immersiveMode: IMMERSIVE, entryUrl: DEFAULT_ENTRY_URL }]);
+  });
+
+  it('leaves the running web view alone on every other client', () => {
+    // The clients that honour "never reload" keep the game that is already
+    // running, so the tap that asked to play does not restart it.
+    enterWebView();
+
+    requestFullScreen(realClick());
+
+    expect(modeEffects()).toEqual([{ immersiveMode: IMMERSIVE, entryUrl: undefined }]);
+  });
+
+  it('stays inline rather than throwing when Android has no such entrypoint', () => {
+    // The effect rejects a name the host does not know. That is a reason to
+    // leave the game in the panel it is already playing in, not to drop the tap
+    // on the floor: `requestFullScreen` is called on the way into a run.
+    onAndroid();
+    (globalThis as { devvit?: unknown }).devvit = {
+      webViewMode: INLINE,
+      entrypoints: {},
+      token: 'tok',
+    };
+
+    expect(() => requestFullScreen(realClick())).not.toThrow();
+    expect(modeEffects()).toEqual([]);
+    expect(warn).toHaveBeenCalled();
   });
 
   it('says nothing on a device that cannot do it at all', () => {

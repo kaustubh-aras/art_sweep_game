@@ -40,11 +40,39 @@ import { dpr } from '../ui/viewport';
  * effect it sends treats it as optional, and the wire contract is explicit
  * about what that means: *"When specified, clients must unconditionally load or
  * reload the target web view. When unspecified, clients must never reload the
- * target web view."* Naming an entrypoint would therefore restart the game from
- * boot, dropping the player back at the menu on the very tap that asked to
- * play. Expanding what is already on screen is the only usable form.
+ * target web view."* Naming an entrypoint therefore restarts the game from
+ * boot, dropping the player back at the card on the very tap that asked to
+ * play, so expanding what is already on screen is the form to prefer.
  */
 const expandInPlace = requestExpandedMode as unknown as (event: MouseEvent) => void;
+
+/**
+ * The Reddit Android client, which cannot expand a web view in place.
+ *
+ * "Never reload" is a promise the other clients keep by handing the expanded
+ * presentation the web view that is already running. Android builds a new one
+ * instead, and a new web view with no entrypoint to load has nothing to show:
+ * the post opens full screen onto Reddit's own spinner and stays there, which
+ * is the grey screen this guard exists to prevent.
+ *
+ * So Android is given the entrypoint it needs. That costs a reload — the card
+ * comes back inside the full-screen presentation and the player taps through it
+ * a second time — which is a poor trade against expanding in place and a very
+ * good one against a post that never opens. Every other client keeps the live
+ * web view exactly as before.
+ */
+function needsEntrypointToExpand(): boolean {
+  return typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
+}
+
+/**
+ * The entrypoint to reload into, named as `devvit.json` names it.
+ *
+ * `post.entrypoints.default` is the only entrypoint this app declares, and the
+ * effect rejects any name that is not in that map, so this is the one value
+ * that can be sent.
+ */
+const DEFAULT_ENTRY = 'default';
 
 function inWebView(): boolean {
   return typeof (globalThis as { devvit?: unknown }).devvit === 'object';
@@ -139,7 +167,11 @@ export function requestFullScreen(event: MouseEvent): void {
     // Inside a post the host owns the presentation, and the Fullscreen API is
     // not ours to call: the iframe does not carry the permission.
     try {
-      expandInPlace(event);
+      if (needsEntrypointToExpand()) {
+        requestExpandedMode(event, DEFAULT_ENTRY);
+      } else {
+        expandInPlace(event);
+      }
     } catch (err) {
       console.warn('[clockshot] expanded mode refused', err);
       return;
