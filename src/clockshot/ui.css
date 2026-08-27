@@ -443,3 +443,42 @@
     transition-duration: 1ms;
   }
 }
+
+/* ========================================================= ambient loop ==
+   The animated backdrop, under the canvas. `#game` stacks it first, the
+   transparent canvas sits over it, and the DOM interface layer over that.
+   ======================================================================== */
+
+#cs-ambient {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  /* The poster, as a background image: on screen before the loop is asked for,
+     and the entire backdrop if it never arrives. */
+  background-size: cover;
+  background-position: center;
+  pointer-events: none;
+}
+
+#cs-ambient video {
+  width: 100%;
+  height: 100%;
+  /* Cover rather than fit: a letterboxed backdrop reads as a mistake. */
+  object-fit: cover;
+  display: block;
+}
+
+/* The canvas has to be told to sit above the backdrop it is now transparent
+   over, and the interface layer above both. */
+#game > canvas {
+  position: relative;
+  z-index: 1;
+}
+
+/* While the splash card is up the game is still booting behind it. The overlay
+   is transparent so the ambient loop shows through, which also means the boot
+   screen would — so it is held back until the card is done. */
+body.cs-splash-up #game > canvas {
+  visibility: hidden;
+}

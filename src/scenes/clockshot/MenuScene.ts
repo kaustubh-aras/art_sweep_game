@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { C, FONT, GLASS, R, S, T, hex } from '@/clockshot/theme';
-import { addBackdrop, drawGlass } from '@/clockshot/glass';
+import { drawGlass } from '@/clockshot/glass';
 import { sfx } from '@/clockshot/sfx';
 import { activityLine, formatClock, formatPoints, store } from '@/clockshot/store';
 import { Button, TOUCH_MIN, fadeTo, layoutOf, text } from '@/clockshot/ui';
@@ -69,9 +69,6 @@ export class MenuScene extends Phaser.Scene {
   }
 
   create(): void {
-    this.cameras.main.setBackgroundColor(C.bg);
-    // Glass needs something behind it, or it is just a grey box.
-    addBackdrop(this);
     this.bg = this.add.graphics();
 
     this.title = text(this, 0, 0, 'CLOCKSHOT', 34, C.gold);

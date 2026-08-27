@@ -1,5 +1,4 @@
 import Phaser from 'phaser';
-import { C } from './theme';
 import { GRAVITY } from './tuning';
 import { BootScene } from '@/scenes/clockshot/BootScene';
 import { MenuScene } from '@/scenes/clockshot/MenuScene';
@@ -25,7 +24,15 @@ export const gameConfig: Phaser.Types.Core.GameConfig = {
   parent: 'game',
   width: 400,
   height: 760, // replaced on the first frame by initViewport()
-  backgroundColor: C.bg,
+  /**
+   * Transparent, so the animated backdrop behind the canvas shows through.
+   *
+   * Every screen that wants an opaque floor still paints one — the play scene
+   * and the editor both set their camera's background, because gameplay and
+   * level building need a controlled surface rather than a moving picture.
+   * The menus deliberately do not.
+   */
+  transparent: true,
   disableContextMenu: true,
   scale: {
     mode: Phaser.Scale.NONE,

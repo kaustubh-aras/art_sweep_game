@@ -1,10 +1,8 @@
 import Phaser from 'phaser';
-import { C } from '@/clockshot/theme';
 import { sfx } from '@/clockshot/sfx';
 import { formatPoints, store } from '@/clockshot/store';
 import { api, NetError, withRetry } from '@/clockshot/net';
 import { fadeTo } from '@/clockshot/ui';
-import { addBackdrop } from '@/clockshot/glass';
 import { esc, mountForScene, type UiScreen } from '@/clockshot/uiLayer';
 import { requestFullScreen } from '@/clockshot/immersive';
 import { SCORE } from '@/shared/config';
@@ -70,10 +68,7 @@ export class ResultsScene extends Phaser.Scene {
   }
 
   create(): void {
-    this.cameras.main.setBackgroundColor(C.bg);
     // The canvas keeps the vibrant field, so the card's `backdrop-filter` has
-    // something worth blurring. This is real frosted glass, not an imitation.
-    addBackdrop(this);
 
     this.ui = mountForScene(this, this.markup());
     this.bind();

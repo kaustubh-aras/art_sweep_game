@@ -36,9 +36,20 @@ const PIPS = 5;
  * with what it has and the button still opens the game, which has its own
  * error screen for the same failure.
  */
+/**
+ * Marks the document while the card is up.
+ *
+ * The overlay is transparent now, so the boot screen behind it would otherwise
+ * bleed around the edges of the card — a loading dial and a title peeking past
+ * a finished piece of art. The canvas is simply held back until the card goes.
+ */
+const SPLASH_UP = 'cs-splash-up';
+
 export async function mountSplash(): Promise<void> {
   const root = document.getElementById('splash');
+  document.body.classList.add(SPLASH_UP);
   if (!root) {
+    document.body.classList.remove(SPLASH_UP);
     // No card means no door to pick, and the game must never be left waiting
     // on an answer that can no longer arrive.
     choose('run');
@@ -50,6 +61,7 @@ export async function mountSplash(): Promise<void> {
   await open;
 
   root.classList.add('gone');
+  document.body.classList.remove(SPLASH_UP);
   window.setTimeout(() => root.remove(), 400);
 }
 

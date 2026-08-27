@@ -67,6 +67,24 @@ async function playRun(
 
 beforeAll(async () => {
   process.env.CLOCKSHOT_PORT = String(PORT);
+
+  /**
+   * Stand the suite up just after a round boundary.
+   *
+   * Rounds roll over every `ROUND_MS`, and several tests below finish a run up
+   * to ninety seconds after starting it. Run against the raw wall clock, any of
+   * those lands in the *next* round whenever real time happens to be within
+   * ninety seconds of a boundary — and the server rejects it, correctly, as
+   * `round_changed`. That is a fifteen-percent chance of red, arriving in
+   * bursts, on code nobody touched.
+   *
+   * Shifting the whole process to the start of a round leaves the full ten
+   * minutes of headroom, so the outcome depends on the test rather than on what
+   * time it is. The tests that care about rollover still ask for it explicitly
+   * with their own per-request offsets.
+   */
+  const intoRound = Date.now() % ROUND_MS;
+  process.env.CLOCKSHOT_TIME_OFFSET = String(ROUND_MS - intoRound + 1_000);
   const mod = (await import('../src/server/index')) as unknown as { default?: unknown };
   void mod;
   // The module starts listening on import; give the socket a moment to bind.

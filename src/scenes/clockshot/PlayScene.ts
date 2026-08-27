@@ -12,7 +12,7 @@ import {
 import { C, FONT, T, hex } from '@/clockshot/theme';
 import { COMBAT, GRAVITY, WARNING_MS } from '@/clockshot/tuning';
 import { TEX, bakeTextures } from '@/clockshot/textures';
-import { ART, fitArt, hasArt } from '@/clockshot/art';
+import { ART, ENEMY_ANIM, fitArt, hasArt } from '@/clockshot/art';
 import { Controls } from '@/clockshot/controls';
 import { TimerHud } from '@/clockshot/timerHud';
 import { Player } from '@/clockshot/player';
@@ -35,6 +35,10 @@ interface EnemyData {
   to: number;
   speed: number;
   dir: 1 | -1;
+  /** The line it patrols along, so the buzz can be measured from somewhere. */
+  baseY: number;
+  /** Its own place in the buzz, so a row of them never shudders in unison. */
+  phase: number;
 }
 
 type EnemySprite = Phaser.Physics.Arcade.Sprite & {
@@ -72,22 +76,74 @@ type PickupSprite = Phaser.Physics.Arcade.Sprite & { kind: PickupKind; taken: bo
  * over.
  */
 /**
- * Blade spin, in degrees per second.
- *
- * Borrowed from Trapmaker, which tuned 36 rad/s by play-testing and described
- * it as "fast, menacing" — roughly 2060 degrees a second. Fast enough that the
- * teeth blur into a threat rather than reading as a slowly turning wheel.
- */
-const SAW_SPIN = 2060;
-
-/**
  * How far a hazard's heat reaches, as a multiple of the thing throwing it.
  *
- * The glow is a warning, so it is deliberately much larger than its source —
- * a halo that stops at the edge of a spike tells a player nothing they could
- * not already see from the spike.
+ * How far a hazard's heat reaches past the thing throwing it, as a multiple of
+ * that thing's size. A halo that stops at the edge of a spike tells a player
+ * nothing they could not already see from the spike.
  */
-const GLOW_SPREAD = 4;
+const GLOW_SPREAD = 1.9;
+
+/**
+ * How far the animated backdrop is held down behind live gameplay.
+ *
+ * How far the animated backdrop is held down behind live gameplay.
+ *
+ * Zero: the arena sits on the loop at full brightness. Raise it if pickups and
+ * hazards start losing their fight with the picture behind them — that is the
+ * whole reason the dial exists.
+ */
+const PLAY_SCRIM = 0;
+
+/**
+ * How fast the enemy turns, in degrees per second.
+ *
+ * Nearly ten rotations a second — well past the point where the 34fps frames
+ * underneath can be read individually, which is the intent: at this speed it
+ * stops being a creature you watch and becomes a hazard you keep away from.
+ */
+const ENEMY_SPIN = 3500;
+
+/**
+ * How big a spike is drawn, and how often one appears along a strip.
+ *
+ * Size and spacing are separate numbers on purpose: raise `size` and the spikes
+ * get bigger where they stand, raise `spacing` and there are fewer of them.
+ * Tiling could not tell those two apart.
+ */
+const SPIKE = {
+  size: 86,
+  spacing: 62,
+} as const;
+
+/**
+ * Whether each hazard throws its own red heat.
+ *
+ * Separate switches because the two are separate judgements: the enemy already
+ * reads as dangerous from its animation alone, where a spike is a static thing
+ * on a dark floor and the heat is most of what makes it noticeable.
+ */
+const ENEMY_GLOW = false;
+const SPIKE_GLOW = false;
+
+/** The buzz: how far it strays off its line, how quickly, and how much it shakes. */
+const ENEMY_BUZZ = {
+  /** World units, peak to centre. Small on purpose — this is a tremor. */
+  travel: 2.6,
+  /** Radians a second. Fast enough to be a vibration rather than a bob. */
+  rate: 17,
+  /** Degrees of shudder added on top of the steady turn. */
+  wobble: 2.2,
+} as const;
+
+/**
+ * How wide one tile of stone is, in world units.
+ *
+ * One number for the whole arena, so a block is the same size whether it is
+ * under the spawn or holding up a ledge on the far side. It matches the
+ * editor's grid cell, which is what a built level is measured in anyway.
+ */
+const TILE_WORLD = 60;
 
 export class PlayScene extends Phaser.Scene {
   private run!: RunStartResponse;
@@ -113,6 +169,10 @@ export class PlayScene extends Phaser.Scene {
    */
   private timeMs = START_TIME_MS;
   private started = false;
+  /** Whether the lit grapple-point art arrived; without it the scale carries it. */
+  private anchorLit = false;
+  /** Holds the loop back so the arena stays readable over it. */
+  private playScrim?: Phaser.GameObjects.Rectangle;
   /** The scale the anchor art is drawn at, so the highlight can build on it. */
   private anchorScale = 1;
   /** Last anchor count painted, so the HUD only redraws when it changes. */
@@ -198,7 +258,6 @@ export class PlayScene extends Phaser.Scene {
     this.physics.world.setBounds(0, 0, width, height);
     this.physics.world.gravity.y = GRAVITY;
     this.cameras.main.setBounds(0, 0, width, height);
-    this.cameras.main.setBackgroundColor(C.bg);
 
     this.drawBackdrop();
     this.buildPlatforms();
@@ -249,44 +308,56 @@ export class PlayScene extends Phaser.Scene {
   }
 
   /** Parallax grid, so speed is legible against an otherwise empty void. */
+  /**
+   * The arena's floor: the animated loop, dimmed, with the grid over it.
+   *
+   * The camera paints nothing, so what shows through the transparent canvas is
+   * the same `<video>` every other screen sits on. That costs the game its
+   * parallax, because a DOM element cannot travel with a camera it knows
+   * nothing about — so the wireframe grid comes back on top of it. The grid is
+   * what actually carried the sense of speed anyway; the picture behind it was
+   * only ever mood.
+   *
+   * The scrim is the part that matters. A busy 30fps loop directly behind
+   * pickups and hazards is motion competing with the things a player has to
+   * read while swinging, and the loop is bright in exactly the wrong places.
+   * Held down here it stays atmosphere.
+   */
   private drawBackdrop(): void {
     const { width, height } = this.arena.world;
 
-    if (hasArt(this, ART.backdrop)) {
-      // The painted arena, parallaxed. Held back to a fraction of full
-      // brightness: it is scenery, and a busy illustration at full strength
-      // competes with the pickups a player is trying to read at speed.
-      const sky = this.add
-        .image(0, 0, ART.backdrop)
+    // The camera paints nothing, so what shows through the transparent canvas
+    // is the animated loop every other screen sits on. At zero the scrim is not
+    // merely invisible — it is never created, so there is no full-screen quad
+    // being composited every frame for no reason.
+    if (PLAY_SCRIM > 0) {
+      const scrim = this.add
+        .rectangle(0, 0, this.scale.width, this.scale.height, C.bg, PLAY_SCRIM)
         .setOrigin(0, 0)
-        .setDepth(-10)
-        .setScrollFactor(0.35)
-        .setAlpha(0.55);
-
-      // Cover the parallaxed span rather than the world: at 0.35 the backdrop
-      // travels a third as far, so it only has to be a third wider.
-      const span = { w: width * 0.4 + this.scale.width, h: height * 0.4 + this.scale.height };
-      const scale = Math.max(span.w / sky.width, span.h / sky.height);
-      sky.setScale(scale);
-      this.world(sky);
-    } else {
-      const g = this.add.graphics().setDepth(-10);
-      g.lineStyle(1, C.grid, 0.55);
-      for (let x = 0; x <= width; x += 120) g.lineBetween(x, 0, x, height);
-      for (let y = 0; y <= height; y += 120) g.lineBetween(0, y, width, y);
-      g.setScrollFactor(0.35);
+        .setScrollFactor(0)
+        .setDepth(-20);
+      this.world(scrim);
+      this.playScrim = scrim;
     }
 
-    // A horizon glow, just to give the void a floor to sit against.
-    const glow = this.add.graphics().setDepth(-9).setScrollFactor(0.5);
-    glow.fillStyle(C.cyan, 0.05);
-    glow.fillRect(0, height - 420, width, 420);
+    // The parallax layer, back over the loop now that there is no painted sky.
+    const g = this.add.graphics().setDepth(-10);
+    g.lineStyle(1, C.grid, 0.55);
+    for (let x = 0; x <= width; x += 120) g.lineBetween(x, 0, x, height);
+    for (let y = 0; y <= height; y += 120) g.lineBetween(0, y, width, y);
+    g.setScrollFactor(0.35);
+
+    // The horizon glow is gone. It was a flat cyan `fillRect` over the bottom
+    // 420 units of the world, and a rectangle has a hard top edge: invisible
+    // against the near-black void it was drawn for, but over the loop it became
+    // a seam straight across the arena with a lighter half beneath it. The
+    // backdrop supplies the depth it was faking.
   }
 
   private buildPlatforms(): void {
     this.platforms = this.physics.add.staticGroup();
     const g = this.add.graphics().setDepth(5);
-    const art = hasArt(this, ART.platform);
+    const art = hasArt(this, ART.platform[0]);
 
     for (const r of this.arena.platforms) {
       const c = centreOf(r);
@@ -339,43 +410,73 @@ export class PlayScene extends Phaser.Scene {
    * standing proud of it reads as "do not go near" without ever being the thing
    * that actually hits them.
    */
+  /**
+   * The painted hazard: a row of spikes standing on the strip.
+   *
+   * Placed one by one rather than tiled. A tiled strip can only ever be cut
+   * into whole fractions of its own width, so an 110-unit hazard could have
+   * spikes at 110, 55 or 37 units and nothing in between — the size was decided
+   * by the strip rather than by what looks right. Placing them frees the two
+   * apart: the spacing follows the strip, the size does not.
+   *
+   * Each one stands on the bottom edge of its strip and is allowed to overhang
+   * the ends. What punishes a player is the collision box; the art is a warning
+   * about it, and a warning that stops exactly at the edge of the danger is a
+   * worse warning.
+   */
+  /**
+   * The painted hazard: a row of spikes standing on the strip, under one glow.
+   *
+   * One glow for the whole strip, not one per spike. Per-spike halos were
+   * 224 units across on spikes standing 55 apart, so each overlapped its
+   * neighbours by about three quarters — and additive light does not overlap
+   * politely. Three of them summed past full brightness, clipped to a flat
+   * saturated slab, and the slab showed the edges of the quads it was made of.
+   * That is the box that slid around when the arena scrolled.
+   *
+   * Stretched into an ellipse across the strip it is also the truer shape: heat
+   * coming off a row of spikes is one glow the length of the row, not a string
+   * of identical circles.
+   */
   private drawSpikeArt(r: Rect): void {
-    const h = r.h * 2.2;
-    const rect = { x: r.x, y: r.y + r.h - h, w: r.w, h };
+    const cols = Math.max(1, Math.round(r.w / SPIKE.spacing));
+    const step = r.w / cols;
+    const floor = r.y + r.h;
 
-    // The heat is PLACED, one halo per spike, rather than tiled with them.
-    // Tiling would bind each halo to its cell, so a glow wider than the spike
-    // it belongs to could not exist — and the whole point is that it spills.
-    const grid = this.tileGrid(rect);
-    const halos = this.add.container(0, 0).setDepth(5).setAlpha(0.3);
-    const size = Math.min(grid.tw, grid.th) * GLOW_SPREAD;
+    if (SPIKE_GLOW) {
+      const glow = this.add
+        .image(r.x + r.w / 2, floor - SPIKE.size * 0.4, TEX.glow)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setTint(C.rage)
+        .setDisplaySize(r.w + SPIKE.size * GLOW_SPREAD, SPIKE.size * GLOW_SPREAD)
+        .setDepth(5)
+        .setAlpha(0.34);
+      this.world(glow);
 
-    for (let i = 0; i < grid.cols; i++) {
-      const cx = rect.x + (i + 0.5) * grid.tw;
-      halos.add(
+      // Offset by where the strip sits, so a wall of spikes throbs like
+      // separate angry things rather than one machine.
+      this.tweens.add({
+        targets: glow,
+        alpha: 0.6,
+        duration: 820 + ((r.x * 13) % 260),
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut',
+      });
+    }
+
+    const spikes = this.add.container(0, 0).setDepth(6);
+    for (let i = 0; i < cols; i++) {
+      spikes.add(
         this.add
-          .image(cx, rect.y + rect.h - grid.th * 0.5, TEX.glow)
-          .setBlendMode(Phaser.BlendModes.ADD)
-          .setTint(C.rage)
-          .setDisplaySize(size, size),
+          .image(r.x + (i + 0.5) * step, floor, ART.hazard)
+          // Anchored to its foot, so raising `size` grows the spike upwards out
+          // of the ground instead of sinking it into the platform.
+          .setOrigin(0.5, 1)
+          .setDisplaySize(SPIKE.size, SPIKE.size),
       );
     }
-    this.world(halos);
-
-    // Slower than the saw's breath and offset by where the strip sits, so a
-    // wall of spikes throbs like a row of separate angry things rather than one
-    // machine. Tweening the container rather than each halo keeps a long strip
-    // to a single tween.
-    this.tweens.add({
-      targets: halos,
-      alpha: 0.6,
-      duration: 820 + ((r.x * 13) % 260),
-      yoyo: true,
-      repeat: -1,
-      ease: 'Sine.easeInOut',
-    });
-
-    this.world(this.layTiles(rect, ART.hazard, 6));
+    this.world(spikes);
   }
 
   /**
@@ -392,31 +493,65 @@ export class PlayScene extends Phaser.Scene {
    * clean multiple still gets whole tiles both ways, each as near square as the
    * rectangle allows.
    */
-  private layTiles(r: Rect, key: string, depth: number): Phaser.GameObjects.TileSprite {
-    const tex = this.textures.get(key).getSourceImage();
-    const size = Math.min(tex.width, tex.height);
-    const { cols, rows } = this.tileGrid(r);
-
-    return this.add
-      .tileSprite(r.x, r.y, r.w, r.h, key)
-      .setOrigin(0, 0)
-      .setDepth(depth)
-      .setTileScale(r.w / (cols * size), r.h / (rows * size));
-  }
-
   /**
-   * How many whole tiles a rectangle takes, and how big each one lands.
+   * Fills a rectangle with tiles at a fixed size, never stretched.
    *
-   * Shared so that anything decorating a tiled strip — the hazard glow, most
-   * obviously — can line up with the tiles exactly instead of deriving the same
-   * rounding a second time and drifting by a pixel.
+   * Every tile is square and drawn at the same scale, whatever shape the ledge
+   * is. The previous version stretched them to land on a whole count, which on
+   * a 220x28 ledge meant drawing a square stone at 55x28 — the same block at a
+   * different aspect on every platform in the arena.
+   *
+   * The tile size is chosen PER PLATFORM so a whole number fits across it
+   * exactly. A ledge is whatever width the arena author drew, and 220 is not a
+   * multiple of anything convenient — at one fixed size the last tile in every
+   * row is a sliver, and at 220 that sliver is two thirds of a block.
+   *
+   * So each platform picks the nearest count and divides its own width by it.
+   * Tiles stay square and every tile on a given ledge is identical; only the
+   * size drifts between platforms, and by about ten percent at the extremes
+   * rather than the five-fold spread that came of deriving it from aspect.
+   *
+   * Height is the one place a tile is still cut. A ledge is 28 units tall and a
+   * tile is nearer 60, so what is drawn is the top of the block — which is what
+   * a thin ledge should look like, and the mossy top edge lands where it wants.
+   *
+   * The variant is chosen from the cell's own coordinates, so it is stable
+   * across a restart and a wall never looks like one block printed repeatedly.
    */
-  private tileGrid(r: Rect): { cols: number; rows: number; tw: number; th: number } {
-    // Aim for tiles about as tall as the rectangle, then round to a whole count.
-    const cols = Math.max(1, Math.round(r.w / r.h));
-    const rows = Math.max(1, Math.round(r.h / (r.w / cols)));
-    return { cols, rows, tw: r.w / cols, th: r.h / rows };
+  private layTiles(r: Rect, keys: readonly string[], depth: number): Phaser.GameObjects.Container {
+    const first = this.textures.get(keys[0]!).getSourceImage();
+    const size = Math.min(first.width, first.height);
+
+    // Whole tiles across, always — the width decides the size, not the reverse.
+    const cols = Math.max(1, Math.round(r.w / TILE_WORLD));
+    const tile = r.w / cols;
+    const scale = tile / size;
+
+    const tiles = this.add.container(0, 0).setDepth(depth);
+
+    for (let c = 0; c < cols; c++) {
+      for (let cy = r.y; cy < r.y + r.h - 0.5; cy += tile) {
+        const cx = r.x + c * tile;
+        const h = Math.min(tile, r.y + r.h - cy);
+
+        const key = keys[this.tileVariant(cx, cy) % keys.length]!;
+        const img = this.add.image(cx, cy, key).setOrigin(0, 0).setScale(scale);
+
+        // Cropped in TEXTURE space, so a short row shows the top of a full-size
+        // tile rather than a squashed whole one.
+        if (h < tile) img.setCrop(0, 0, size, h / scale);
+        tiles.add(img);
+      }
+    }
+    return tiles;
   }
+
+  /** A stable pseudo-random pick for a cell, from its own position. */
+  private tileVariant(x: number, y: number): number {
+    const h = Math.imul(Math.round(x) | 0, 73856093) ^ Math.imul(Math.round(y) | 0, 19349663);
+    return Math.abs(h >>> 0);
+  }
+
 
   private drawSpikes(g: Phaser.GameObjects.Graphics, r: Rect): void {
     const teeth = Math.max(3, Math.floor(r.w / 18));
@@ -431,6 +566,7 @@ export class PlayScene extends Phaser.Scene {
   }
 
   private buildAnchors(): void {
+    this.anchorLit = hasArt(this, ART.anchorLit);
     for (const a of this.arena.anchors) {
       const img = this.add.image(a.x, a.y, TEX.anchor).setDepth(6);
       this.anchorScale = fitArt(img, TEX.anchor);
@@ -471,36 +607,66 @@ export class PlayScene extends Phaser.Scene {
 
   private buildEnemies(patrols: readonly { x: number; y: number; from: number; to: number; speed: number }[]): void {
     this.enemies = this.physics.add.group({ allowGravity: false });
-    for (const p of patrols) {
-      const e = this.enemies.create(p.x, p.y, TEX.enemy) as EnemySprite;
-      fitArt(e, TEX.enemy);
-      e.setDepth(12);
 
-      // The heat the blade throws, behind it and additively blended so it reads
+    if (hasArt(this, ENEMY_ANIM.key) && !this.anims.exists(ENEMY_ANIM.key)) {
+      this.anims.create({
+        key: ENEMY_ANIM.key,
+        frames: this.anims.generateFrameNumbers(ENEMY_ANIM.key, {
+          start: 0,
+          end: ENEMY_ANIM.frames - 1,
+        }),
+        frameRate: ENEMY_ANIM.frameRate,
+        repeat: -1,
+      });
+    }
+    for (const p of patrols) {
+      const animated = hasArt(this, ENEMY_ANIM.key);
+      const e = this.enemies.create(
+        p.x,
+        p.y,
+        animated ? ENEMY_ANIM.key : TEX.enemy,
+      ) as EnemySprite;
+      fitArt(e, animated ? ENEMY_ANIM.key : TEX.enemy);
+      e.setDepth(12);
+      if (animated) {
+        // Started from its own frame, so a row of them writhes out of step
+        // rather than moving as one organism.
+        e.play(ENEMY_ANIM.key);
+        e.anims.setProgress(((p.x * 7) % 100) / 100);
+      }
+
+      // The heat the enemy throws, behind it and additively blended so it reads
       // as light rather than as a red disc laid over the art. Drawn rather than
       // post-processed on purpose: Phaser's bloom is WebGL-only and vanishes
       // without a word on a Canvas fallback, and a hazard that stops announcing
       // itself on some devices is not a decoration, it is a bug.
-      const glow = this.add
-        .image(p.x, p.y, TEX.glow)
-        .setDepth(11)
-        .setBlendMode(Phaser.BlendModes.ADD)
-        .setTint(C.rage)
-        .setDisplaySize(COMBAT.enemyRadius * 10, COMBAT.enemyRadius * 10)
-        .setAlpha(0.55);
-      e.glow = glow;
+      //
+      // Off for now — see ENEMY_GLOW. Everything downstream already copes with
+      // an enemy that has none, so this is the only place that had to change.
+      if (ENEMY_GLOW) {
+        const glow = this.add
+          .image(p.x, p.y, TEX.glow)
+          .setDepth(11)
+          .setBlendMode(Phaser.BlendModes.ADD)
+          .setTint(C.rage)
+          .setDisplaySize(COMBAT.enemyRadius * 7, COMBAT.enemyRadius * 7)
+          // Kept well under half, because two enemies passing each other add
+          // their light together and anything near the top clips into a slab.
+          .setAlpha(0.42);
+        e.glow = glow;
 
-      this.tweens.add({
-        targets: glow,
-        alpha: 0.82,
-        scale: glow.scale * 1.12,
-        duration: 620,
-        yoyo: true,
-        repeat: -1,
-        ease: 'Sine.easeInOut',
-      });
+        this.tweens.add({
+          targets: glow,
+          alpha: 0.66,
+          scale: glow.scale * 1.12,
+          duration: 620,
+          yoyo: true,
+          repeat: -1,
+          ease: 'Sine.easeInOut',
+        });
+      }
       (e.body as Phaser.Physics.Arcade.Body).setAllowGravity(false);
-      e.cs = { from: p.from, to: p.to, speed: p.speed, dir: 1 };
+      e.cs = { from: p.from, to: p.to, speed: p.speed, dir: 1, baseY: p.y, phase: (p.x % 97) / 97 };
       e.setVelocityX(p.speed);
     }
   }
@@ -636,9 +802,10 @@ export class PlayScene extends Phaser.Scene {
 
   private relayout(): void {
     const L = layoutOf(this);
+    this.playScrim?.setSize(L.w, L.h);
     this.timer.layout(L);
     this.drawChrome(L);
-    this.hudScore.setPosition(L.cx, L.y + 78 * L.ui).setFontSize(Math.round(T.label * L.ui));
+    this.hudScore.setPosition(L.cx, L.y + 100 * L.ui).setFontSize(Math.round(T.label * L.ui));
     this.hudTeam.setPosition(L.x, L.y + 22 * L.ui).setFontSize(Math.round(T.label * L.ui));
     this.pauseZone
       .setPosition(L.x + L.iw - 24 * L.ui, L.y + 24 * L.ui)
@@ -905,11 +1072,24 @@ export class PlayScene extends Phaser.Scene {
         d.dir = -1;
         e.setVelocityX(-d.speed);
       }
-      // The blade spins on its own motor: fast, and the same way round however
-      // the saw happens to be travelling. Tying the spin to the direction of
-      // travel — which is what this did — made it stall and reverse at each end
-      // of the patrol, which reads as a wobble rather than as a running blade.
-      e.angle += (delta / 1000) * SAW_SPIN;
+      e.setFlipX(d.dir < 0);
+
+      /**
+       * Three motions on top of the frames, none of them large.
+       *
+       * A steady turn, because a round thing that never rotates reads as a
+       * sticker; a buzz across the line it patrols; and a shudder in the angle
+       * on top of the turn. Each is small on its own — together they make the
+       * thing look like it is straining rather than sliding.
+       *
+       * The buzz moves it on Y only. Its patrol bounds are tested against X, so
+       * jittering that axis would have it turning round early at random.
+       */
+      const t = this.time.now / 1000 + d.phase * 10;
+      e.angle += (delta / 1000) * ENEMY_SPIN;
+      e.y = d.baseY + Math.sin(t * ENEMY_BUZZ.rate) * ENEMY_BUZZ.travel;
+      e.angle += Math.sin(t * ENEMY_BUZZ.rate * 1.7) * ENEMY_BUZZ.wobble;
+
       e.glow?.setPosition(e.x, e.y);
     }
   }
@@ -953,7 +1133,10 @@ export class PlayScene extends Phaser.Scene {
       const img = this.anchorSprites[i]!;
       const a = this.arena.anchors[i]!;
       const isTarget = target !== null && a.x === target.x && a.y === target.y;
-      img.setScale(this.anchorScale * (isTarget ? 1.35 : 1));
+      // Two textures rather than a tint: the lit ring is its own piece of art,
+      // and a brightened copy of the dim one would not be the same picture.
+      if (this.anchorLit) img.setTexture(isTarget ? ART.anchorLit : TEX.anchor);
+      img.setScale(this.anchorScale * (isTarget ? 1.2 : 1));
       img.setAlpha(isTarget ? 1 : 0.55);
     }
     return target;

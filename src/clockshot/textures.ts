@@ -179,21 +179,32 @@ export function bakeTextures(scene: Phaser.Scene): void {
     g.fillCircle(17, 17, 3.5);
   });
 
-  // A soft radial, drawn once in WHITE and tinted by whatever needs to look
-  // hot — baking the colour in would mean a second texture the first time
-  // anything wanted a different one. Built from stacked circles rather than a
-  // gradient because `Graphics` has no gradient fill; at this size the banding
-  // disappears the moment it is blended.
+  /*
+   * A soft radial, drawn once in WHITE and tinted by whatever needs to look hot.
+   *
+   * Painted as a real canvas gradient rather than as a stack of `Graphics`
+   * circles. The stack was the visible-square problem: sixty-four filled discs
+   * at two percent each never quite reach zero at the rim, and the leftover
+   * couple of alpha levels — invisible on their own — are additively blended
+   * and then tinted red, which is exactly the operation that turns "almost
+   * nothing" into a legible box the size of the sprite's quad.
+   *
+   * A gradient with a hard `alpha 0` stop has no leftover to blend.
+   */
   if (!scene.textures.exists(TEX.glow)) {
-    const gr = scene.make.graphics({ x: 0, y: 0 }, false);
     const R = 64;
-    for (let i = R; i > 0; i--) {
-      const t = i / R;
-      gr.fillStyle(0xffffff, 0.05 * (1 - t) ** 1.6);
-      gr.fillCircle(R, R, i);
+    const canvas = scene.textures.createCanvas(TEX.glow, R * 2, R * 2);
+    if (canvas) {
+      const ctx = canvas.getContext();
+      const grad = ctx.createRadialGradient(R, R, 0, R, R, R);
+      grad.addColorStop(0, 'rgba(255,255,255,0.85)');
+      grad.addColorStop(0.45, 'rgba(255,255,255,0.28)');
+      grad.addColorStop(0.75, 'rgba(255,255,255,0.06)');
+      grad.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, R * 2, R * 2);
+      canvas.refresh();
     }
-    gr.generateTexture(TEX.glow, R * 2, R * 2);
-    gr.destroy();
   }
 
   bake(scene, TEX.spark, 14, 14, (g) => {

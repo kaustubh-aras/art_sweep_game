@@ -1,6 +1,5 @@
 import Phaser from 'phaser';
 import { C, FONT } from '@/clockshot/theme';
-import { addBackdrop } from '@/clockshot/glass';
 import { store } from '@/clockshot/store';
 import { Button, layoutOf, text } from '@/clockshot/ui';
 
@@ -33,9 +32,6 @@ export class ErrorScene extends Phaser.Scene {
   }
 
   create(): void {
-    this.cameras.main.setBackgroundColor(C.bg);
-    // Glass needs something behind it, or it is just a grey box.
-    addBackdrop(this);
     this.bg = this.add.graphics();
     this.icon = this.add.graphics();
 

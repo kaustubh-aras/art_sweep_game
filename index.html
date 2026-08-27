@@ -130,7 +130,11 @@
         align-items: center;
         justify-content: center;
         gap: 18px;
-        background: var(--bg);
+        /* Transparent on purpose: the animated loop lives behind the canvas,
+           and an opaque overlay here would hide the one screen every reader
+           sees. The loop carries its own scrim, so the card still has a
+           controlled surface to sit on. */
+        background: transparent;
         transition: opacity 260ms ease;
       }
 
@@ -189,25 +193,6 @@
          exists. It opens with the course itself — the arena drawn from its own
          layout data — because the picture answers "what am I being asked to
          do?" faster than any line of copy on the card could. */
-      /* Glass over a flat colour is a grey box. These are the same four fields
-         the canvas bakes behind its own panels, so the card and the game are
-         lit by one light. */
-      #splash::before {
-        content: '';
-        /* Fixed, not absolute: the card scrolls in card mode, and an absolute
-           field bleeding past the edges would extend that scroll area and put
-           a scrollbar inside the post. */
-        position: fixed;
-        inset: 0;
-        z-index: 0;
-        pointer-events: none;
-        background:
-          radial-gradient(38% 30% at 18% 12%, rgba(61, 240, 255, 0.34), transparent 70%),
-          radial-gradient(34% 26% at 86% 22%, rgba(255, 198, 61, 0.3), transparent 70%),
-          radial-gradient(42% 34% at 72% 74%, rgba(123, 92, 255, 0.34), transparent 70%),
-          radial-gradient(32% 24% at 16% 86%, rgba(61, 255, 160, 0.26), transparent 70%);
-        filter: blur(46px);
-      }
 
       #splash.splash-card-mode {
         gap: 0;

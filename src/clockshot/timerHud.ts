@@ -56,7 +56,7 @@ export class TimerHud {
     this.gfx = scene.add.graphics().setScrollFactor(0).setDepth(880);
 
     this.digits = scene.add
-      .text(0, 0, '0.0', { fontFamily: FONT, fontSize: '34px', color: hex(C.gold) })
+      .text(0, 0, '0.0', { fontFamily: FONT, fontSize: '46px', color: hex(C.gold) })
       .setOrigin(0.5)
       .setScrollFactor(0)
       .setDepth(882);
@@ -75,13 +75,16 @@ export class TimerHud {
 
   layout(L: Layout): void {
     this.ui = L.ui;
-    this.w = Math.min(L.iw, 208 * L.ui);
-    this.h = 66 * L.ui;
+    // The clock is the game — it is the fuel, the health bar and the score at
+    // once — so it is sized like the most important thing on screen rather than
+    // like a status line.
+    this.w = Math.min(L.iw, 268 * L.ui);
+    this.h = 88 * L.ui;
     this.x = L.cx - this.w / 2;
     this.y = L.y + 2 * L.ui;
 
-    this.digits.setPosition(L.cx, this.y + 26 * L.ui).setFontSize(Math.round(32 * L.ui));
-    this.caption.setPosition(L.cx, this.y + 47 * L.ui).setFontSize(Math.round(8.5 * L.ui));
+    this.digits.setPosition(L.cx, this.y + 34 * L.ui).setFontSize(Math.round(46 * L.ui));
+    this.caption.setPosition(L.cx, this.y + 62 * L.ui).setFontSize(Math.round(9.5 * L.ui));
 
     // A resize has to repaint even if the clock has not moved.
     this.drawnStep = -1;
@@ -147,17 +150,17 @@ export class TimerHud {
 
     // The housing.
     g.fillStyle(C.panel, 0.92);
-    g.fillRoundedRect(this.x, this.y, this.w, this.h, 14 * ui);
+    g.fillRoundedRect(this.x, this.y, this.w, this.h, 18 * ui);
     g.lineStyle(Math.max(1.5, 2 * ui), urgent ? C.danger : C.panelEdge, urgent ? 0.9 : 0.7);
-    g.strokeRoundedRect(this.x, this.y, this.w, this.h, 14 * ui);
+    g.strokeRoundedRect(this.x, this.y, this.w, this.h, 18 * ui);
 
-    this.drawDial(g, this.x + 20 * ui, this.y + 26 * ui, 11 * ui, frac, colour);
+    this.drawDial(g, this.x + 26 * ui, this.y + 34 * ui, 15 * ui, frac, colour);
 
     // The drain bar, and the empty channel behind it.
-    const bx = this.x + 14 * ui;
-    const bw = this.w - 28 * ui;
-    const by = this.y + this.h - 15 * ui;
-    const bh = 6 * ui;
+    const bx = this.x + 16 * ui;
+    const bw = this.w - 32 * ui;
+    const by = this.y + this.h - 18 * ui;
+    const bh = 9 * ui;
     g.fillStyle(C.grid, 1);
     g.fillRoundedRect(bx, by, bw, bh, bh / 2);
     if (frac > 0) {

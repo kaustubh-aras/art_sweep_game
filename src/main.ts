@@ -4,6 +4,7 @@ import { initViewport } from './ui/viewport';
 import { sfx } from './clockshot/sfx';
 import { mountSplash } from './clockshot/splash';
 import { choose } from './clockshot/choice';
+import { mountAmbient } from './clockshot/ambient';
 
 // Single game instance. Inside Devvit Web this file is the webview entrypoint.
 const game = new Phaser.Game(gameConfig);
@@ -12,6 +13,10 @@ const game = new Phaser.Game(gameConfig);
 // box pinned to the container, and every viewport change handled without a
 // reload — including the orientation changes a phone will throw at it.
 initViewport(game, 'game');
+
+// The animated field the whole interface sits on. Mounted before the splash
+// resolves so the poster is already there when the card comes away.
+mountAmbient();
 
 /**
  * Hand the keyboard back to real text fields.

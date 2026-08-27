@@ -1,6 +1,5 @@
 import Phaser from 'phaser';
 import { C, FONT, hex } from '@/clockshot/theme';
-import { addBackdrop } from '@/clockshot/glass';
 import { sfx } from '@/clockshot/sfx';
 import { Button, fadeTo, fitText, layoutOf, text, type Layout } from '@/clockshot/ui';
 import { countKind, seedOf, starterLevel, toArena, validate, type BuildLevel } from '@/clockshot/build';
@@ -72,9 +71,6 @@ export class LevelsScene extends Phaser.Scene {
   }
 
   create(): void {
-    this.cameras.main.setBackgroundColor(C.bg);
-    // Glass needs something behind it, or it is just a grey box.
-    addBackdrop(this);
     this.levels = loadLibrary();
     this.selected = 0;
     this.scroll = 0;

@@ -77,11 +77,25 @@ export const context = new Proxy({} as Record<string, unknown>, {
   },
 });
 
+let devPostSeq = 0;
+
 export const reddit = {
-  submitCustomPost: async () => ({
-    url: 'https://reddit.com/r/clockshotdev/comments/dev',
-    permalink: '/r/clockshotdev/comments/dev',
-  }),
+  /**
+   * A stand-in post, with an id.
+   *
+   * The id matters: publishing a level stores it against the post that now *is*
+   * that level, so a mock that returned no id would make the publish path
+   * untestable locally — which is exactly the path most worth testing before it
+   * starts creating real posts in somebody's subreddit.
+   */
+  submitCustomPost: async () => {
+    const id = `t3_dev${(devPostSeq += 1)}`;
+    return {
+      id,
+      url: `https://reddit.com/r/clockshotdev/comments/${id}`,
+      permalink: `/r/clockshotdev/comments/${id}`,
+    };
+  },
 };
 
 export function getServerPort(): number {
@@ -97,6 +111,13 @@ const MIME: Record<string, string> = {
   '.json': 'application/json',
   '.png': 'image/png',
   '.svg': 'image/svg+xml',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  // Video needs its real type here or local testing lies: Safari refuses a
+  // source whose Content-Type does not match the `type` on the element, and
+  // the CDN this ships behind will always send the right one.
+  '.webm': 'video/webm',
+  '.mp4': 'video/mp4',
 };
 
 /**

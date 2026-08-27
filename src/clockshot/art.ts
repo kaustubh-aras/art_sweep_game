@@ -3,9 +3,11 @@ import playerUrl from '@/assets/player.png';
 import anchorUrl from '@/assets/anchor.png';
 import clockUrl from '@/assets/clock.png';
 import hazardUrl from '@/assets/hazard.png';
-import enemyUrl from '@/assets/enemy.png';
-import platformUrl from '@/assets/platform.png';
-import backdropUrl from '@/assets/backdrop.jpg';
+import enemySheetUrl from '@/assets/enemy-sheet.png';
+import anchorLitUrl from '@/assets/anchor-lit.png';
+import platform1Url from '@/assets/platform-1.png';
+import platform2Url from '@/assets/platform-2.png';
+import platform3Url from '@/assets/platform-3.png';
 import { TEX } from './textures';
 import { COMBAT, PLAYER_SIZE } from './tuning';
 
@@ -29,20 +31,45 @@ const REPLACEMENTS: readonly (readonly [string, string])[] = [
   [TEX.player, playerUrl],
   [TEX.anchor, anchorUrl],
   [TEX.clock, clockUrl],
-  [TEX.enemy, enemyUrl],
 ];
 
 /** Artwork with no generated equivalent, for things drawn as shapes before. */
+/**
+ * The enemy's sheet, described once.
+ *
+ * The frame size and the count live next to the file they belong to, because
+ * they are properties of the artwork rather than of the scene that plays it —
+ * a re-export at a different size should only have to change these numbers.
+ */
+export const ENEMY_ANIM = {
+  key: 'cs-art-enemy',
+  frameWidth: 128,
+  frameHeight: 128,
+  frames: 48,
+  /** Above the source's own 25fps: it should look like it is straining. */
+  frameRate: 34,
+} as const;
+
 export const ART = {
+  /** The grapple point while it is lit — see `TEX.anchor` for its dim state. */
+  anchorLit: 'cs-art-anchor-lit',
   hazard: 'cs-art-hazard',
-  platform: 'cs-art-platform',
-  backdrop: 'cs-art-backdrop',
+  /**
+   * Three interchangeable stone tiles.
+   *
+   * Kept as separate textures rather than one strip, because they are chosen
+   * per cell — a tile is picked from this list by where it sits, so a wall of
+   * stone is not the same block printed forty times.
+   */
+  platform: ['cs-art-platform-1', 'cs-art-platform-2', 'cs-art-platform-3'],
 } as const;
 
 const ADDITIONS: readonly (readonly [string, string])[] = [
+  [ART.anchorLit, anchorLitUrl],
   [ART.hazard, hazardUrl],
-  [ART.platform, platformUrl],
-  [ART.backdrop, backdropUrl],
+  [ART.platform[0], platform1Url],
+  [ART.platform[1], platform2Url],
+  [ART.platform[2], platform3Url],
 ];
 
 /**
@@ -56,6 +83,15 @@ export function loadArt(scene: Phaser.Scene): void {
   for (const [key, url] of [...REPLACEMENTS, ...ADDITIONS]) {
     if (scene.textures.exists(key)) continue;
     scene.load.image(key, url);
+  }
+
+  // The enemy is a sheet rather than a still, so it is loaded as one: Phaser
+  // has to be told the frame size up front or it cannot cut it.
+  if (!scene.textures.exists(ENEMY_ANIM.key)) {
+    scene.load.spritesheet(ENEMY_ANIM.key, enemySheetUrl, {
+      frameWidth: ENEMY_ANIM.frameWidth,
+      frameHeight: ENEMY_ANIM.frameHeight,
+    });
   }
 }
 
@@ -78,7 +114,19 @@ export const FIT: Readonly<Record<string, { w: number; h: number }>> = {
   [TEX.player]: { w: PLAYER_SIZE.w + 12, h: PLAYER_SIZE.h + 12 },
   [TEX.anchor]: { w: 34, h: 34 },
   [TEX.clock]: { w: 30, h: 30 },
-  [TEX.enemy]: { w: COMBAT.enemyRadius * 2 + 12, h: COMBAT.enemyRadius * 2 + 12 },
+  [ART.anchorLit]: { w: 34, h: 34 },
+  /**
+   * Drawn half again as large as the body that can actually hurt you.
+   *
+   * The overhang is the forgiving direction: a player who thinks they were
+   * clipped by a thrashing limb and was not will believe they got away with
+   * something, where the reverse — a hitbox reaching past the art — is the kind
+   * of unfairness people quit over.
+   */
+  [ENEMY_ANIM.key]: {
+    w: (COMBAT.enemyRadius * 2 + 12) * 1.5,
+    h: (COMBAT.enemyRadius * 2 + 12) * 1.5,
+  },
 };
 
 /**
