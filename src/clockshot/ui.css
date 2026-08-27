@@ -218,27 +218,47 @@
 
 /* The card turns over rather than being replaced, because the score and the
    board answer the same question and swapping screens would read as leaving. */
+/* The two faces cross-fade; they do not turn in 3D.
+   A real flip needs `transform-style: preserve-3d` to survive on this element,
+   and it cannot: the card is also `.cs-card`, which carries `overflow: hidden`,
+   and the spec forces any non-visible overflow back to `flat`. Both faces then
+   run `backdrop-filter`, which flattens it a second time, and no `perspective`
+   was ever set. The card mirrored instead of turning, the board never appeared,
+   and `← BACK` — the only exit — sat on the face you could not reach. */
 .cs-flip {
   position: relative;
-  transform-style: preserve-3d;
-  transition: transform 460ms cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.cs-flip[data-face='back'] {
-  transform: rotateY(180deg);
 }
 
 .cs-face {
-  backface-visibility: hidden;
-  -webkit-backface-visibility: hidden;
   display: flex;
   flex-direction: column;
+  transition:
+    opacity 260ms cubic-bezier(0.4, 0, 0.2, 1),
+    transform 260ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+/* The back sits on top of the front, so the card keeps the front's height and
+   does not resize as the board loads. `.cs-rows` scrolls within it. */
 .cs-face-back {
   position: absolute;
   inset: 0;
-  transform: rotateY(180deg);
+}
+
+/* Whichever face is not showing is fully inert: invisible, untappable, and out
+   of the tab order, so a stray tap can never land on the hidden one. */
+.cs-flip[data-face='front'] .cs-face-back,
+.cs-flip[data-face='back'] .cs-face-front {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.cs-flip[data-face='front'] .cs-face-back {
+  transform: translateX(10px);
+}
+
+.cs-flip[data-face='back'] .cs-face-front {
+  transform: translateX(-10px);
 }
 
 /* ------------------------------------------------------------- results -- */
@@ -418,7 +438,7 @@
 /* ------------------------------------------------------- reduced motion -- */
 
 @media (prefers-reduced-motion: reduce) {
-  .cs-flip,
+  .cs-face,
   .cs-btn {
     transition-duration: 1ms;
   }

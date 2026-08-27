@@ -91,7 +91,7 @@ export class ResultsScene extends Phaser.Scene {
     const won = this.tally.reachedGoal;
     return `
       <div class="cs-card cs-flip" data-face="front">
-        <div class="cs-face cs-glass cs-glass-dense">
+        <div class="cs-face cs-face-front cs-glass cs-glass-dense">
           <div class="cs-band" data-outcome="${won ? 'won' : 'lost'}">
             <span class="cs-badge" hidden>RECORD HOLDER</span>
             <h1 class="cs-verdict">${won ? 'CLEARED' : 'OUT OF TIME'}</h1>

@@ -14,6 +14,37 @@ const game = new Phaser.Game(gameConfig);
 initViewport(game, 'game');
 
 /**
+ * Hand the keyboard back to real text fields.
+ *
+ * `Controls` registers A, D, SPACE, W, E, P, ESC and the arrows with Phaser's
+ * keyboard manager, and capture calls `preventDefault` on every one of them —
+ * at the window, for the whole page, and for as long as the game is running
+ * rather than only during a run. Focus a DOM `<input>`, like the field that
+ * names a level, and those keys are swallowed before the browser can type
+ * them: "z" and "y" land, "a", "d" and space do not.
+ *
+ * Toggling capture off while a text field has focus is Phaser's own documented
+ * answer. It is delegated on the document rather than bound to one field, so
+ * every input the game grows later is covered without anyone remembering to.
+ */
+const isTextEntry = (node: EventTarget | null): boolean =>
+  node instanceof HTMLInputElement ||
+  node instanceof HTMLTextAreaElement ||
+  (node instanceof HTMLElement && node.isContentEditable);
+
+const setKeyCapture = (capturing: boolean): void => {
+  const keyboard = game.input.keyboard;
+  if (keyboard) keyboard.preventDefault = capturing;
+};
+
+document.addEventListener('focusin', (event) => {
+  if (isTextEntry(event.target)) setKeyCapture(false);
+});
+document.addEventListener('focusout', (event) => {
+  if (isTextEntry(event.target)) setKeyCapture(true);
+});
+
+/**
  * Audio may only start after a real user gesture, so the AudioContext is not
  * even constructed until the first touch — that way no browser ever logs an
  * autoplay warning.

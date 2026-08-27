@@ -175,9 +175,16 @@ export class Player {
     const v = this.body.velocity;
 
     // Pumping: push along the tangent, the way you drive a swing.
+    //
+    // The tangent is the radial turned a quarter turn, and the sign of that
+    // turn is the whole control scheme. Screen Y grows downward, so a player
+    // hanging straight below the anchor has n = (0, 1): turning it this way
+    // gives (1, 0), and pressing right drives you right. Turning it the other
+    // way gives (-1, 0) — which inverted the stick for every moment spent on
+    // the rope, and that is most of a run.
     if (intent.moveX !== 0) {
-      const tx = -ny;
-      const ty = nx;
+      const tx = ny;
+      const ty = -nx;
       const push = GRAPPLE.swingAccel * dtSeconds * intent.moveX;
       v.x += tx * push;
       v.y += ty * push;
