@@ -196,10 +196,18 @@ export function bakeTextures(scene: Phaser.Scene): void {
     const canvas = scene.textures.createCanvas(TEX.glow, R * 2, R * 2);
     if (canvas) {
       const ctx = canvas.getContext();
+      // Broad rather than hot. These are drawn with `BlendModes.ADD`, so two
+      // halos that touch have their light summed — an enemy standing over a
+      // spike strip contributes both — and anything past full white clips flat,
+      // which shows up as a bright patch with a hard edge where the clipping
+      // starts. A bright core is what runs out of headroom first, so the centre
+      // gives up some brightness and the falloff takes longer to reach nothing.
+      // Reach still costs nothing: spreading light does not clip, raising it
+      // does.
       const grad = ctx.createRadialGradient(R, R, 0, R, R, R);
-      grad.addColorStop(0, 'rgba(255,255,255,0.85)');
-      grad.addColorStop(0.45, 'rgba(255,255,255,0.28)');
-      grad.addColorStop(0.75, 'rgba(255,255,255,0.06)');
+      grad.addColorStop(0, 'rgba(255,255,255,0.58)');
+      grad.addColorStop(0.4, 'rgba(255,255,255,0.3)');
+      grad.addColorStop(0.72, 'rgba(255,255,255,0.11)');
       grad.addColorStop(1, 'rgba(255,255,255,0)');
       ctx.fillStyle = grad;
       ctx.fillRect(0, 0, R * 2, R * 2);

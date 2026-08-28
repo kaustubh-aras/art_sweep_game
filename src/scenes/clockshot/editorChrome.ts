@@ -37,9 +37,8 @@ export interface ChromeState {
   paintMode: boolean;
   used: number;
   total: number;
-  /** A level only becomes saveable once its author has actually cleared it. */
+  /** A level only becomes postable once its author has actually cleared it. */
   verified: boolean;
-  onShelf: boolean;
   /** Set while a publish is in flight, so the button cannot be pressed twice. */
   publishing?: boolean;
 }
@@ -64,6 +63,14 @@ export interface ChromeHandlers {
 export interface EditorChrome {
   update(state: ChromeState): void;
   toast(message: string, ms?: number): void;
+  /**
+   * Asks the builder to confirm the name their level goes out under.
+   *
+   * Posting is the one irreversible thing the editor does: the level becomes a
+   * Reddit post other people play, and the name on it is the name it keeps.
+   * Resolves true to go ahead, false if they backed out.
+   */
+  confirmPost(name: string): Promise<boolean>;
   /** The space the chrome occupies, in GAME UNITS, for the scene's layout. */
   insets(): { top: number; left: number };
   destroy(): void;
@@ -71,8 +78,7 @@ export interface EditorChrome {
 
 /** The toolbar, left to right. Icons are drawn, never emoji or font glyphs. */
 const ACTIONS: readonly { id: string; label: string; icon: string; title: string }[] = [
-  { id: 'back', label: '', icon: 'back', title: 'Back to the menu' },
-  { id: 'levels', label: '', icon: 'levels', title: 'Your levels' },
+  { id: 'back', label: '', icon: 'back', title: 'Back' },
   { id: 'undo', label: '', icon: 'undo', title: 'Undo' },
   { id: 'redo', label: '', icon: 'redo', title: 'Redo' },
   { id: 'grid', label: '', icon: 'grid', title: 'Show the grid' },
@@ -88,7 +94,6 @@ const ACTIONS: readonly { id: string; label: string; icon: string; title: string
 function icon(name: string): string {
   const paths: Record<string, string> = {
     back: '<path d="M15 5 L8 12 L15 19"/>',
-    levels: '<path d="M4 7h16M4 12h16M4 17h16"/>',
     undo: '<path d="M9 8H15a4 4 0 0 1 0 8H8"/><path d="M12 5 9 8l3 3"/>',
     redo: '<path d="M15 8H9a4 4 0 0 0 0 8h7"/><path d="M12 5l3 3-3 3"/>',
     grid: '<path d="M4 9h16M4 15h16M9 4v16M15 4v16"/>',
@@ -106,13 +111,16 @@ export function mountEditorChrome(
   for (const a of ACTIONS) {
     ui.onClick(`[data-act="${a.id}"]`, () => handlers.onAction(a.id));
   }
-  for (const id of ['erase', 'mode', 'test', 'save', 'publish']) {
+  for (const id of ['erase', 'mode', 'test', 'publish']) {
     ui.onClick(`[data-act="${id}"]`, () => handlers.onAction(id));
   }
 
   /* --- rename ---------------------------------------------------------- */
 
-  const dialog = ui.find<HTMLDialogElement>('.cs-dialog');
+  // Both dialogs carry `.cs-dialog` for their styling, so each is found by the
+  // class that says which one it is — a bare `.cs-dialog` would match whichever
+  // happens to come first in the markup.
+  const dialog = ui.find<HTMLDialogElement>('.cs-dialog-rename');
   const field = ui.find<HTMLInputElement>('.cs-field');
 
   const closeDialog = (): void => {
@@ -125,11 +133,34 @@ export function mountEditorChrome(
     field.select();
   });
   ui.onClick('[data-act="rename-cancel"]', closeDialog);
-  ui.find('.cs-dialog-form').addEventListener('submit', (event) => {
+  ui.find('.cs-dialog-rename .cs-dialog-form').addEventListener('submit', (event) => {
     event.preventDefault();
     const name = field.value.trim().slice(0, 24);
     closeDialog();
     if (name) handlers.onRename(name);
+  });
+
+  /* --- confirming a post ------------------------------------------------ */
+
+  const postDialog = ui.find<HTMLDialogElement>('.cs-dialog-post');
+  // Held between opening the dialog and the button that closes it, so the
+  // caller can simply await an answer instead of being handed two callbacks.
+  let settlePost: ((ok: boolean) => void) | null = null;
+
+  const answerPost = (ok: boolean): void => {
+    postDialog.close();
+    settlePost?.(ok);
+    settlePost = null;
+  };
+
+  ui.onClick('[data-act="post-cancel"]', () => answerPost(false));
+  ui.onClick('[data-act="post-confirm"]', () => answerPost(true));
+  // Escape and the backdrop close a `<dialog>` without going through either
+  // button. Unanswered has to mean no, or the promise never settles and the
+  // POST button stays disabled for the rest of the session.
+  postDialog.addEventListener('close', () => {
+    settlePost?.(false);
+    settlePost = null;
   });
 
   /* --- the rail -------------------------------------------------------- */
@@ -146,6 +177,17 @@ export function mountEditorChrome(
   let lastTools = '';
 
   return {
+    confirmPost(name: string): Promise<boolean> {
+      ui.text('.cs-post-name', name.toUpperCase());
+      postDialog.showModal();
+      // Focus the way out, not the way through: the destructive-by-default
+      // button should be the one you have to reach for.
+      ui.find<HTMLButtonElement>('[data-act="post-cancel"]').focus();
+      return new Promise<boolean>((resolve) => {
+        settlePost = resolve;
+      });
+    },
+
     update(state: ChromeState): void {
       ui.text('.cs-ed-name', state.name.toUpperCase());
 
@@ -181,13 +223,6 @@ export function mountEditorChrome(
       publish.title = state.verified
         ? 'Publish this level as a Reddit post anyone can play'
         : 'Clear the level in TEST before publishing it';
-
-      const save = ui.find<HTMLButtonElement>('[data-act="save"]');
-      save.disabled = !state.verified;
-      save.textContent = state.onShelf && state.verified ? 'SAVED' : 'SAVE';
-      save.title = state.verified
-        ? 'Put this level on your shelf'
-        : 'Clear the level in TEST before saving it';
 
       // Rebuilt only when something actually changed: this runs on every paint
       // stroke, and rewriting the list each time would fight the scroll.
@@ -269,7 +304,6 @@ function markup(): string {
 
         <div class="cs-tb-group cs-tb-verbs">
           <button type="button" class="cs-btn cs-tb-verb cs-tb-test" data-act="test">TEST</button>
-          <button type="button" class="cs-btn cs-tb-verb cs-btn-primary" data-act="save">SAVE</button>
           <button type="button" class="cs-btn cs-tb-verb cs-tb-publish" data-act="publish">POST</button>
         </div>
       </div>
@@ -280,7 +314,25 @@ function markup(): string {
 
       <p class="cs-toast" data-on="false" role="status"></p>
 
-      <dialog class="cs-dialog">
+      <dialog class="cs-dialog cs-dialog-post">
+        <form class="cs-dialog-form" method="dialog">
+          <p class="cs-label">Post this level as</p>
+          <p class="cs-post-name"></p>
+          <p class="cs-post-note">
+            Everyone in the community can play it, and the name goes with it.
+          </p>
+          <div class="cs-dialog-actions">
+            <button type="button" class="cs-btn cs-btn-ghost" data-act="post-cancel">
+              RENAME IT
+            </button>
+            <button type="button" class="cs-btn cs-btn-primary" data-act="post-confirm">
+              POST IT
+            </button>
+          </div>
+        </form>
+      </dialog>
+
+      <dialog class="cs-dialog cs-dialog-rename">
         <form class="cs-dialog-form" method="dialog">
           <label class="cs-label" for="cs-name-field">Name this level</label>
           <input class="cs-field" id="cs-name-field" maxlength="24" autocomplete="off" />

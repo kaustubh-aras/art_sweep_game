@@ -10,13 +10,27 @@
 /**
  * How long one leaderboard window lasts.
  *
- * Still the old round length. How long a board *should* live is an open
- * question — 10 minutes keeps a race winnable for a newcomer, a day makes a
- * score mean more — so this stays where it is until that is decided. Nothing
- * else assumes a particular value; changing this constant moves the whole
- * system, because the window is derived from it rather than stored.
+ * A day, because this game lives in a Reddit post and a Reddit post is found
+ * over days. The old value was ten minutes, which made the board look broken
+ * rather than empty: you finished a run, saw yourself at rank 1, came back a
+ * few minutes later and every score — including your own — was gone. Two
+ * players were almost never inside the same window, so the shared part of a
+ * "community" game was shared with nobody.
+ *
+ * It also gives the scoring somewhere to land. Points reward route mastery —
+ * distinct anchors, and seconds still on the clock — and mastery needs to run
+ * the same arena more than once. `arenaIndexAt` is keyed to this window, so a
+ * ten-minute round swapped the arena before anyone could learn it. One arena a
+ * day is a thing to come back to.
+ *
+ * The cost, and it is real: a newcomer arriving late in the day meets a board
+ * that is harder to top than a ten-minute one was. That is the trade — a score
+ * that means something against one that is merely winnable.
+ *
+ * Nothing else assumes a particular value; changing this constant moves the
+ * whole system, because every window is derived from it rather than stored.
  */
-export const ROUND_MS = 10 * 60 * 1000;
+export const ROUND_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Time is the fuel, and this is the tank.

@@ -16,15 +16,30 @@ export type Choice = 'run' | 'build';
 let chosen: Choice | null = null;
 let settle: ((choice: Choice) => void) | null = null;
 
-const choosing = new Promise<Choice>((resolve) => {
+let choosing = new Promise<Choice>((resolve) => {
   settle = resolve;
 });
 
-/** Records the door taken. Only the first call counts. */
+/** Records the door taken. Only the first call counts, per opening of the card. */
 export function choose(choice: Choice): void {
   if (chosen !== null) return;
   chosen = choice;
   settle?.(choice);
+}
+
+/**
+ * Puts the question back, so the card can be shown a second time.
+ *
+ * A settled promise cannot un-settle, and the answer is what the boot scene
+ * waits on — so returning to the card means a fresh promise and a cleared
+ * answer, not just re-rendering the DOM. Called when a screen hands control
+ * back to the card rather than to another scene.
+ */
+export function resetChoice(): void {
+  chosen = null;
+  choosing = new Promise<Choice>((resolve) => {
+    settle = resolve;
+  });
 }
 
 /** Resolves once the player has picked a door. */

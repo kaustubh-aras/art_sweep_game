@@ -29,8 +29,9 @@ describe('arena selection', () => {
     expect(first).not.toEqual([0, 1, 2, 0, 1, 2]);
   });
 
-  it('uses every arena over a day of rounds', () => {
-    // 144 rounds is 24h at ROUND_MS. Every arena should show up in that.
+  it('uses every arena over a run of rounds', () => {
+    // A window is a day now, so this is roughly five months of them. The point
+    // is unchanged: the hash must not strand an arena nobody ever plays.
     const seen = new Set(Array.from({ length: 144 }, (_, r) => arenaIndexAt(r)));
     expect(seen.size).toBe(ARENA_COUNT);
   });

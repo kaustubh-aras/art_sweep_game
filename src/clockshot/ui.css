@@ -34,9 +34,22 @@
   --cs-good: #3dffa0;
   --cs-danger: #ff5a3d;
 
-  /* --- glass --- */
+  /* --- glass ---
+     These two are the sheen, not the material. White alone was the whole
+     material while a known dark backdrop sat behind the layer, and the
+     contrast figures in `theme.ts` were measured against exactly that. The
+     backdrop is a video loop now, so a bright frame passing under a panel
+     lifted it toward white with near-white type still sitting on it, and the
+     measurement stopped being true — differently on every frame.
+
+     `--cs-glass-base` is the substrate that puts a floor under it: the page's
+     own background, opaque enough that what shows through can never decide
+     whether text is readable. Blur, rim and top hairline still do the glass,
+     and the loop still moves behind it. Against a worst-case white frame this
+     holds ~10:1 for `--cs-ink` and ~5.5:1 for `--cs-dim`. */
   --cs-glass: rgba(255, 255, 255, 0.09);
   --cs-glass-dense: rgba(255, 255, 255, 0.06);
+  --cs-glass-base: rgba(7, 11, 22, 0.88);
   --cs-rim: rgba(255, 255, 255, 0.2);
   --cs-rim-top: rgba(255, 255, 255, 0.42);
   --cs-blur: 16px;
@@ -81,7 +94,10 @@
 /* ---------------------------------------------------------------- glass -- */
 
 .cs-glass {
-  background: var(--cs-glass);
+  /* Sheen over substrate, in that order: the white keeps it reading as glass,
+     the dark underneath is what the text actually stands on. */
+  background: linear-gradient(180deg, var(--cs-glass), rgba(255, 255, 255, 0.03)),
+    var(--cs-glass-base);
   border: 1px solid var(--cs-rim);
   border-radius: var(--cs-r-xl);
   backdrop-filter: blur(var(--cs-blur)) saturate(150%);
@@ -93,9 +109,12 @@
 }
 
 /* A pane carrying a lot of small type takes *less* white, not more: every
-   point of white here is contrast taken from the text on it. */
+   point of white here is contrast taken from the text on it. It must restate
+   the substrate, because setting `background` at all would otherwise drop the
+   one `.cs-glass` just put underneath. */
 .cs-glass-dense {
-  background: var(--cs-glass-dense);
+  background: linear-gradient(180deg, var(--cs-glass-dense), rgba(255, 255, 255, 0.02)),
+    var(--cs-glass-base);
 }
 
 /* ---------------------------------------------------------------- cards -- */

@@ -26,11 +26,13 @@ import {
   type PieceKind,
   type Tool,
 } from '@/clockshot/build';
-import { canPersist, isSaved, loadDraft, saveDraft, saveLevel } from '@/clockshot/buildStore';
+import { loadDraft, saveDraft } from '@/clockshot/buildStore';
 import { practiceRun, type PracticeResult } from '@/clockshot/practice';
 import { drawPieceIcon } from '@/clockshot/buildArt';
 import { mountEditorChrome, type ChromeTool, type EditorChrome } from './editorChrome';
 import { api, NetError } from '@/clockshot/net';
+import { choose, resetChoice } from '@/clockshot/choice';
+import { mountSplash } from '@/clockshot/splash';
 
 interface Rect {
   x: number;
@@ -60,9 +62,13 @@ const MAX_UNDO = 40;
  *
  * The arrangement is the one a phone can actually be built on: the palette is a
  * rail down the side where a thumb already is, the toolbar sits above the
- * canvas, and TEST and SAVE float over the bottom corner of the grid — so the
+ * canvas, and TEST and POST float over the bottom corner of the grid — so the
  * two things a builder does most often are never more than a thumb's reach from
  * the piece they just placed.
+ *
+ * There is no SAVE. Every edit already goes to the draft, so the button only
+ * ever copied the level onto a shelf — and posting, which is the thing a
+ * builder is actually here to do, never needed it.
  */
 export class EditorScene extends Phaser.Scene {
   private level!: BuildLevel;
@@ -77,14 +83,6 @@ export class EditorScene extends Phaser.Scene {
 
   private undoStack: BuildLevel[] = [];
   private redoStack: BuildLevel[] = [];
-  /**
-   * Whether this level is already on the shelf.
-   *
-   * Cached rather than asked. The library lives in `localStorage`, and reading
-   * it means parsing every level a player owns — not something to do on every
-   * frame of a paint stroke just to decide what one button says.
-   */
-  private onShelf = false;
 
   /* View onto the grid: world units at the canvas corner, and screen-per-world. */
   private zoom = 1;
@@ -136,7 +134,6 @@ export class EditorScene extends Phaser.Scene {
     this.erase = false;
     this.gesture = 'none';
     this.pointers.clear();
-    this.onShelf = isSaved(this.level.id);
 
     this.cameras.main.setBackgroundColor(C.bg);
 
@@ -161,14 +158,14 @@ export class EditorScene extends Phaser.Scene {
     });
 
     // Back from a test run: a clear is the one thing that makes a level
-    // saveable, so it is worth saying out loud rather than only lighting a
+    // postable, so it is worth saying out loud rather than only lighting a
     // button somewhere.
     const result = this.pending?.result;
     if (result?.clearedMs != null) {
       this.level.verifiedMs = result.clearedMs;
       saveDraft(this.level);
       this.refresh();
-      this.toast(`CLEARED with ${(result.clearedMs / 1000).toFixed(1)}s — ready to save`, 2600);
+      this.toast(`CLEARED with ${(result.clearedMs / 1000).toFixed(1)}s — ready to post`, 2600);
     } else if (result) {
       this.toast('Test ended without reaching the goal', 2200);
     }
@@ -238,7 +235,6 @@ export class EditorScene extends Phaser.Scene {
       used: budgetOf(this.level),
       total: BUDGET_TOTAL,
       verified: this.level.verifiedMs !== null,
-      onShelf: this.onShelf,
       publishing: this.publishing,
     });
     this.drawCanvas();
@@ -611,9 +607,7 @@ export class EditorScene extends Phaser.Scene {
   private onAction(id: string): void {
     switch (id) {
       case 'back':
-        return this.leave('cs-menu');
-      case 'levels':
-        return this.leave('cs-levels');
+        return this.leaveToCard();
       case 'undo':
         return this.undo();
       case 'redo':
@@ -631,8 +625,6 @@ export class EditorScene extends Phaser.Scene {
         return this.refresh();
       case 'test':
         return this.onTest();
-      case 'save':
-        return this.onSave();
       case 'publish':
         return void this.onPublish();
       default:
@@ -654,6 +646,27 @@ export class EditorScene extends Phaser.Scene {
     const problem = validate(this.level);
     if (problem) {
       this.toast(problem, 2400);
+      return;
+    }
+
+    // A level its own builder has never finished is not a level. The server is
+    // the authority — it answers `level_unverified` — and this asks the same
+    // question locally so the answer arrives before the confirmation, rather
+    // than after agreeing to a post that was never going to happen.
+    //
+    // It cannot live in `validate`, which also gates TEST: requiring a clear
+    // in order to test would be requiring the clear that testing produces.
+    if (this.level.verifiedMs === null) {
+      this.toast('Clear it in TEST first — then it can be posted', 2600);
+      return;
+    }
+
+    // The last thing between a draft and a Reddit post, and the name is the
+    // part that cannot be taken back: the level goes up under it and other
+    // people meet it by it. Asking here rather than trusting a default is the
+    // difference between a level called THE WELL and one called MY ARENA.
+    if (!(await this.chrome.confirmPost(this.level.name))) {
+      this.chrome.toast('Not posted. Tap the name to change it.', 2400);
       return;
     }
 
@@ -684,6 +697,34 @@ export class EditorScene extends Phaser.Scene {
     saveDraft(this.level);
     sfx.uiSelect();
     fadeTo(this, () => this.scene.start(scene));
+  }
+
+  /**
+   * Hands control back to the splash card rather than to a menu.
+   *
+   * The card is the post as it reads in the feed, and it already offers both
+   * doors — take the run, or build one. Leaving the editor onto a second screen
+   * that offers the same two things was a stop on the way to somewhere.
+   *
+   * The card is DOM and the answer it produces is what `BootScene` waits on, so
+   * going back means putting the question back before showing it: a settled
+   * promise cannot un-settle. Boot is restarted behind the card to do the
+   * routing it already knows how to do — texture baking skips what is already
+   * baked, so arriving there twice costs nothing.
+   */
+  private leaveToCard(): void {
+    saveDraft(this.level);
+    sfx.uiSelect();
+    resetChoice();
+    // Boot is about to sit and wait for an answer that only the card can give,
+    // so a card that fails to come up has to answer for it. `main.ts` guards
+    // the first opening the same way; without this the loading screen would
+    // wait for a tap on something that was never drawn.
+    void mountSplash().catch((err: unknown) => {
+      console.warn('[clockshot] splash failed to reopen', err);
+      choose('run');
+    });
+    fadeTo(this, () => this.scene.start('cs-boot'));
   }
 
   /* ---------------------------------------------------------------------- */
@@ -898,7 +939,7 @@ export class EditorScene extends Phaser.Scene {
   }
 
   /* ---------------------------------------------------------------------- */
-  /* Test and save                                                           */
+  /* Test and post                                                           */
   /* ---------------------------------------------------------------------- */
 
   private onTest(): void {
@@ -918,33 +959,6 @@ export class EditorScene extends Phaser.Scene {
         practice: { levelId: this.level.id, name: this.level.name, returnTo: 'cs-editor' },
       }),
     );
-  }
-
-  /**
-   * Saving is earned, not offered.
-   *
-   * A level goes on the shelf only once its builder has finished it themselves,
-   * which is the whole reason TEST sits next to SAVE rather than somewhere in a
-   * menu. It is also the only check that can catch a level whose goal simply
-   * cannot be reached.
-   */
-  private onSave(): void {
-    if (this.level.verifiedMs === null) {
-      this.toast('Clear it with TEST first — then it can be saved', 2400);
-      return;
-    }
-    if (!canPersist()) {
-      this.toast('This browser will not keep saved levels', 2400);
-      return;
-    }
-    if (saveLevel(this.level)) {
-      this.onShelf = true;
-      sfx.collectLarge();
-      this.toast(`Saved "${this.level.name.toUpperCase()}" to your levels`, 2400);
-      this.refresh();
-    } else {
-      this.toast('Could not save — storage is full', 2400);
-    }
   }
 
   /* ---------------------------------------------------------------------- */

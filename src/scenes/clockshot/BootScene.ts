@@ -44,6 +44,18 @@ export class BootScene extends Phaser.Scene {
   }
 
   create(): void {
+    // Per-arrival state, reset here rather than at the field.
+    //
+    // Phaser keeps one instance of a scene and runs `create` again on each
+    // start, so a field initialiser only ever fires once — at construction.
+    // `done` guards against routing twice out of a single visit, and left over
+    // from a previous visit it guarded against routing at all: the card would
+    // reopen, the player would pick a door, `load_` would reach its
+    // `if (this.done) return` and stop there. A loading screen that never
+    // leaves. `levelPost` is refetched below and must not be stale either.
+    this.done = false;
+    this.levelPost = null;
+
     bakeTextures(this);
 
     this.dial = this.add.graphics();
@@ -89,7 +101,9 @@ export class BootScene extends Phaser.Scene {
     if (this.done) return;
 
     if (choice === 'build') {
-      this.go('cs-levels');
+      // Asking to build lands in the editor, not on the shelf in front of it —
+      // the same door the menu's BUILD A LEVEL now opens.
+      this.go('cs-editor');
       return;
     }
     await this.startRun();

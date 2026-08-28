@@ -381,3 +381,23 @@
   background: rgba(61, 240, 255, 0.12);
   color: var(--cs-cyan);
 }
+
+/* ------------------------------------------------- confirming a post -- */
+
+/* The name is the point of the dialog, so it is the thing set in the size the
+   rest of the editor reserves for a heading. Reading it back is the check. */
+.cs-post-name {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--cs-gold);
+  word-break: break-word;
+}
+
+.cs-post-note {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--cs-dim);
+}

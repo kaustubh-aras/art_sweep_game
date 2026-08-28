@@ -393,12 +393,38 @@ export function fadeIn(scene: Phaser.Scene, ms = M.enter): void {
 }
 
 /**
+ * Scenes that have committed to leaving.
+ *
+ * A scene is not torn down until the fade finishes and the next one starts, so
+ * for the length of the fade the old screen is still mounted, still drawing and
+ * still listening. That is long enough to press a second button, and two
+ * `fadeTo` calls meant two queued `FADE_OUT_COMPLETE` handlers and two
+ * `scene.start` calls racing each other into different scenes.
+ *
+ * Weak, so a scene that goes away takes its entry with it.
+ */
+const LEAVING = new WeakSet<Phaser.Scene>();
+
+/**
  * Runs `fn` after fading out, for a clean handover between screens.
  *
  * Shorter than the fade in by default: leaving quickly reads as responsive,
  * where arriving quickly reads as abrupt.
+ *
+ * Committing is one-way. The first call wins, input is closed immediately
+ * rather than when the fade ends, and later calls are dropped — a screen on its
+ * way out has stopped being a screen you can use, and the alternative is a
+ * handover whose destination depends on timing.
  */
 export function fadeTo(scene: Phaser.Scene, fn: () => void, ms = M.exit): void {
+  if (LEAVING.has(scene)) return;
+  LEAVING.add(scene);
+
+  // Canvas controls stop responding here. DOM overlays are not Phaser input, so
+  // anything holding one destroys it on SHUTDOWN; see `TapProxy`.
+  scene.input.enabled = false;
+  scene.events.once(Phaser.Scenes.Events.SHUTDOWN, () => LEAVING.delete(scene));
+
   scene.cameras.main.fadeOut(duration(ms), 7, 11, 22);
   scene.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, fn);
 }

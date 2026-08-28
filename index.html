@@ -35,8 +35,24 @@
 
         /* The glass material. The DOM can do the real thing — a genuine
            backdrop blur — so the card is actual frosted glass rather than the
-           approximation the canvas has to settle for. */
+           approximation the canvas has to settle for.
+
+           `--glass` is only the sheen. It is white, and white alone was the
+           whole material back when a known dark backdrop sat behind it: 6%
+           white over #070b16 lifts a dark panel slightly and text stays
+           legible on it. The card now floats over raw video, and a bright
+           frame passing underneath turned the panel light with near-white type
+           still on it. Contrast changed frame to frame, which is not a
+           contrast you can measure or promise.
+
+           So the substrate is `--glass-base`: the page's own background at a
+           high enough alpha that what shows through can never decide whether
+           the text is readable. The blur, the rim and the top hairline still
+           do the glass; the video still moves behind it; the floor is fixed.
+           Against a worst-case white frame this holds ~10:1 for `--fg` and
+           ~5.5:1 for `--dim`, both clear of the 4.5:1 the palette promises. */
         --glass: rgba(255, 255, 255, 0.06);
+        --glass-base: rgba(7, 11, 22, 0.88);
         --glass-rim: rgba(255, 255, 255, 0.22);
         --glass-rim-top: rgba(255, 255, 255, 0.44);
         --blur: 16px;
@@ -132,8 +148,12 @@
         gap: 18px;
         /* Transparent on purpose: the animated loop lives behind the canvas,
            and an opaque overlay here would hide the one screen every reader
-           sees. The loop carries its own scrim, so the card still has a
-           controlled surface to sit on. */
+           sees.
+
+           It used to say the loop carried its own scrim. It does not — see
+           `ambient.ts`, which dropped it — so nothing here controls what the
+           text sits on. The card below solves that with its own substrate;
+           the loading type has no card, so it carries a shadow instead. */
         background: transparent;
         transition: opacity 260ms ease;
       }
@@ -170,17 +190,27 @@
         }
       }
 
+      /* Both of these sit on raw video with nothing behind them, so each
+         carries its own darkness: a tight shadow for the edge and a wider,
+         softer one that darkens the frame it happens to land on. Cheaper than
+         a scrim, and it does not flatten the loop the way one would. */
       #splash .title {
         font-size: 24px;
         letter-spacing: 0.3em;
         color: var(--gold);
         text-indent: 0.3em;
+        text-shadow:
+          0 1px 2px rgba(4, 7, 14, 0.95),
+          0 0 14px rgba(4, 7, 14, 0.8);
       }
 
       #splash .sub {
         font-size: 12px;
         color: var(--dim);
         letter-spacing: 0.08em;
+        text-shadow:
+          0 1px 2px rgba(4, 7, 14, 0.95),
+          0 0 12px rgba(4, 7, 14, 0.85);
       }
 
       @media (prefers-reduced-motion: reduce) {
@@ -212,7 +242,10 @@
         z-index: 1;
         border: 1px solid var(--glass-rim);
         border-radius: 18px;
-        background: var(--glass);
+        /* Sheen over substrate, in that order: the white keeps the material
+           reading as glass, the dark underneath is what the text stands on. */
+        background: linear-gradient(180deg, var(--glass), rgba(255, 255, 255, 0.02)),
+          var(--glass-base);
         backdrop-filter: blur(var(--blur)) saturate(160%);
         -webkit-backdrop-filter: blur(var(--blur)) saturate(160%);
         /* The drop shadow gives the pane somewhere to sit; the inset hairline

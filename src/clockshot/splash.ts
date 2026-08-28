@@ -4,9 +4,10 @@ import { requestFullScreen } from './immersive';
 import { sfx } from './sfx';
 import { formatPoints, store } from './store';
 import { arenaAt } from './arena';
+import { toArena } from './build';
 import { arenaArt } from './splashArt';
 import { arenaIndexAt, START_TIME_MS } from '../shared/config';
-import type { LeaderRow } from '../shared/api';
+import type { LeaderRow, LevelPostResponse } from '../shared/api';
 
 /**
  * The splash card — what a player sees in the feed before the game exists.
@@ -14,7 +15,7 @@ import type { LeaderRow } from '../shared/api';
  * This is a Reddit post first and a game second. Someone scrolling past has not
  * asked for a grappling hook; they are deciding, in about a second, whether
  * this post is worth stopping for. So the card leads with the things that make
- * that decision: which course is up, how hard it is, who has beaten it and how
+ * that decision: which course is up, who has beaten it and how
  * fast, and how long is left to take it off them.
  *
  * It is deliberately DOM rather than another Phaser scene. The card is a
@@ -23,9 +24,6 @@ import type { LeaderRow } from '../shared/api';
  * *trusted* click, which is the only currency that buys full screen and an
  * audio context, so the tap that opens the game spends it on both.
  */
-
-/** How many difficulty marks the card shows, lit or unlit. */
-const PIPS = 5;
 
 /**
  * Puts the card up and resolves when the player taps into the game.
@@ -56,13 +54,21 @@ export async function mountSplash(): Promise<void> {
     return;
   }
 
-  const rows = await loadData();
-  const open = renderCard(root, rows);
+  // Reopening: the card is hidden rather than destroyed, so this clears the
+  // class that hid it last time.
+  root.classList.remove('gone');
+
+  const data = await loadData();
+  const open = renderCard(root, data);
   await open;
 
   root.classList.add('gone');
   document.body.classList.remove(SPLASH_UP);
-  window.setTimeout(() => root.remove(), 400);
+  // The element stays. It used to be removed 400ms after the first choice,
+  // which was fine while the card was the way *in* and nothing else. It is now
+  // also the way back — the editor hands control here rather than to a menu —
+  // and an empty hidden div costs nothing next to rebuilding it. `loadData`
+  // runs again on each opening, so a reopened card is not a stale one.
 }
 
 /**
@@ -71,8 +77,15 @@ export async function mountSplash(): Promise<void> {
  * `store.refresh()` is the same call the boot scene makes, so the state it
  * lands is reused rather than fetched twice.
  */
-async function loadData(): Promise<LeaderRow[]> {
-  const [, board] = await Promise.allSettled([
+/** Everything the card needs, and which of the two cards to draw. */
+interface CardData {
+  rows: LeaderRow[];
+  /** Set when this post carries somebody's own level rather than the daily one. */
+  post: LevelPostResponse | null;
+}
+
+async function loadData(): Promise<CardData> {
+  const [, board, level] = await Promise.allSettled([
     store.refreshQuietly(),
     api.leaderboard().catch((err: unknown) => {
       // A board that is empty and a board that failed read the same on the
@@ -80,15 +93,59 @@ async function loadData(): Promise<LeaderRow[]> {
       if (!(err instanceof NetError)) throw err;
       return { players: [] as LeaderRow[] };
     }),
+    api.levelPost().catch((err: unknown) => {
+      // A post that will not say what it is gets treated as an ordinary one.
+      // The daily arena is the right thing to show when nothing says otherwise.
+      if (!(err instanceof NetError)) throw err;
+      return null;
+    }),
   ]);
 
-  return board.status === 'fulfilled' ? board.value.players : [];
+  const post = level.status === 'fulfilled' ? level.value : null;
+  return {
+    rows: board.status === 'fulfilled' ? board.value.players : [],
+    post: post?.level ? post : null,
+  };
 }
 
 /** Builds the card and hands back the tap that dismisses it. */
-function renderCard(root: HTMLElement, rows: LeaderRow[]): Promise<void> {
+function renderCard(root: HTMLElement, data: CardData): Promise<void> {
   const b = store.board;
-  const arena = b ? arenaAt(arenaIndexAt(b.roundIndex)) : arenaAt(0);
+  const post = data.post;
+
+  /**
+   * A level post is a different post, and used to claim it was this one.
+   *
+   * The card was always drawn from the daily arena, so somebody's published
+   * level showed up under THE SPAN's name, THE SPAN's picture and the daily
+   * board — every fact on it about a level nobody was about to play. A post
+   * that carries a level answers with that level for all of them: `toArena`
+   * turns it into the same shape the shipped arenas are, so the artwork is
+   * drawn from what the builder actually built.
+   */
+  const arena = post?.level
+    ? toArena(post.level)
+    : b
+      ? arenaAt(arenaIndexAt(b.roundIndex))
+      : arenaAt(0);
+
+  const title = post?.level ? post.level.name : arena.name;
+  const credit = post
+    ? // The rest of this line is written in caps; a username is not. Reddit
+      // keeps the case people chose, so folding it would be printing somebody's
+      // name wrong on their own level.
+      post.author
+      ? `BY u/${post.author}`
+      : 'A PLAYER-BUILT LEVEL'
+    : b
+      ? `ROUND ${b.roundIndex}`
+      : 'CLOCKSHOT';
+  const blurb = post
+    ? post.clears > 0
+      ? `${post.clears} ${post.clears === 1 ? 'player has' : 'players have'} cleared it`
+      : 'Nobody has cleared it yet'
+    : arena.blurb;
+  const rows = post ? post.board : data.rows;
 
   root.classList.add('splash-card-mode');
   root.innerHTML = `
@@ -100,13 +157,10 @@ function renderCard(root: HTMLElement, rows: LeaderRow[]): Promise<void> {
 
       <div class="card-head">
         <div class="art-meta">
-          <span class="art-round">${b ? `ROUND ${b.roundIndex}` : 'CLOCKSHOT'}</span>
-          <span class="art-pips" title="difficulty ${arena.difficulty} of 5">
-            difficulty ${pips(arena.difficulty)}
-          </span>
+          <span class="art-round">${esc(credit)}</span>
         </div>
-        <h1 class="art-title">${esc(arena.name)}</h1>
-        <p class="art-blurb">${esc(arena.blurb)}</p>
+        <h1 class="art-title">${esc(title)}</h1>
+        <p class="art-blurb">${esc(blurb)}</p>
       </div>
 
       <section class="board">
@@ -115,9 +169,17 @@ function renderCard(root: HTMLElement, rows: LeaderRow[]): Promise<void> {
       </section>
 
       <section class="stats">
+        ${
+          post
+            ? `
+        ${stat('clears', String(post.clears))}
+        ${stat('par', post.parMs !== null ? `${(post.parMs / 1000).toFixed(1)}s` : '—', 'gold')}
+        ${stat('best here', rows.length > 0 ? formatPoints(rows[0]?.points ?? 0) : '—')}`
+            : `
         ${stat('racing', b ? String(b.players) : '—')}
         ${stat('top', b && b.topScore !== null ? formatPoints(b.topScore) : '—', 'gold')}
-        ${stat('your best', store.best > 0 ? formatPoints(store.best) : '—')}
+        ${stat('your best', store.best > 0 ? formatPoints(store.best) : '—')}`
+        }
       </section>
 
       <button type="button" class="card-cta">
@@ -168,13 +230,6 @@ function renderCard(root: HTMLElement, rows: LeaderRow[]): Promise<void> {
     open(run, 'run');
     if (build) open(build, 'build');
   });
-}
-
-/** Difficulty as five marks, so it reads before it is counted. */
-function pips(level: number): string {
-  return Array.from({ length: PIPS }, (_, i) =>
-    i < level ? '<i class="pip on"></i>' : '<i class="pip"></i>',
-  ).join('');
 }
 
 /**

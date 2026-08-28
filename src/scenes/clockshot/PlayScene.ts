@@ -76,13 +76,25 @@ type PickupSprite = Phaser.Physics.Arcade.Sprite & { kind: PickupKind; taken: bo
  * over.
  */
 /**
- * How far a hazard's heat reaches, as a multiple of the thing throwing it.
+ * A hazard's heat: how far it reaches, and how hard it burns.
  *
- * How far a hazard's heat reaches past the thing throwing it, as a multiple of
- * that thing's size. A halo that stops at the edge of a spike tells a player
- * nothing they could not already see from the spike.
+ * `spread` is a multiple of the size of the thing throwing the light, so a
+ * halo scales with its hazard instead of being a fixed blob. A glow that stops
+ * at the edge of a spike tells a player nothing the spike had not already told
+ * them — reach is most of what makes danger legible before you are on top of
+ * it, at speed, on a phone.
+ *
+ * `alpha` is where it rests and `peak` is the top of its pulse. Both are worth
+ * keeping honest: these draw with `BlendModes.ADD`, so light *accumulates* —
+ * two enemies passing each other sum theirs, and a spike strip under an enemy
+ * sums both. Peaks near 1 stop being a glow and become a white slab.
  */
-const GLOW_SPREAD = 1.9;
+const HEAT = {
+  /** One halo for a whole strip, so the row reads as a wall rather than teeth. */
+  spike: { spread: 2.8, alpha: 0.34, peak: 0.58 },
+  /** Multiple of `enemyRadius`, and how much the halo swells on the beat. */
+  enemy: { spread: 10.5, alpha: 0.4, peak: 0.64, swell: 1.18 },
+} as const;
 
 /**
  * How far the animated backdrop is held down behind live gameplay.
@@ -123,8 +135,8 @@ const SPIKE = {
  * reads as dangerous from its animation alone, where a spike is a static thing
  * on a dark floor and the heat is most of what makes it noticeable.
  */
-const ENEMY_GLOW = false;
-const SPIKE_GLOW = false;
+const ENEMY_GLOW = true;
+const SPIKE_GLOW = true;
 
 /** The buzz: how far it strays off its line, how quickly, and how much it shakes. */
 const ENEMY_BUZZ = {
@@ -448,16 +460,16 @@ export class PlayScene extends Phaser.Scene {
         .image(r.x + r.w / 2, floor - SPIKE.size * 0.4, TEX.glow)
         .setBlendMode(Phaser.BlendModes.ADD)
         .setTint(C.rage)
-        .setDisplaySize(r.w + SPIKE.size * GLOW_SPREAD, SPIKE.size * GLOW_SPREAD)
+        .setDisplaySize(r.w + SPIKE.size * HEAT.spike.spread, SPIKE.size * HEAT.spike.spread)
         .setDepth(5)
-        .setAlpha(0.34);
+        .setAlpha(HEAT.spike.alpha);
       this.world(glow);
 
       // Offset by where the strip sits, so a wall of spikes throbs like
       // separate angry things rather than one machine.
       this.tweens.add({
         targets: glow,
-        alpha: 0.6,
+        alpha: HEAT.spike.peak,
         duration: 820 + ((r.x * 13) % 260),
         yoyo: true,
         repeat: -1,
@@ -649,16 +661,17 @@ export class PlayScene extends Phaser.Scene {
           .setDepth(11)
           .setBlendMode(Phaser.BlendModes.ADD)
           .setTint(C.rage)
-          .setDisplaySize(COMBAT.enemyRadius * 7, COMBAT.enemyRadius * 7)
-          // Kept well under half, because two enemies passing each other add
-          // their light together and anything near the top clips into a slab.
-          .setAlpha(0.42);
+          .setDisplaySize(
+            COMBAT.enemyRadius * HEAT.enemy.spread,
+            COMBAT.enemyRadius * HEAT.enemy.spread,
+          )
+          .setAlpha(HEAT.enemy.alpha);
         e.glow = glow;
 
         this.tweens.add({
           targets: glow,
-          alpha: 0.66,
-          scale: glow.scale * 1.12,
+          alpha: HEAT.enemy.peak,
+          scale: glow.scale * HEAT.enemy.swell,
           duration: 620,
           yoyo: true,
           repeat: -1,

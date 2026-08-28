@@ -97,7 +97,17 @@ export class MenuScene extends Phaser.Scene {
     // Building needs no server and no login: it is the one thing here a player
     // can do while the board is between windows or their connection is out.
     this.buildBtn = new Button(this, 0, 0, 'BUILD A LEVEL', { width: 240, variant: 'secondary', color: C.good }, () =>
-      fadeTo(this, () => this.scene.start('cs-levels')),
+      // Straight into the editor, not to the shelf in front of it. For everyone
+      // who has never built anything — which is everyone, once — that shelf was
+      // an empty list with PLAY, EDIT and DELETE all greyed out and one live
+      // button that just said NEW LEVEL. A screen whose only working control
+      // leads somewhere else is a door, not a screen.
+      //
+      // Nothing is stranded by skipping it: the editor's own toolbar carries
+      // "Your levels", so the shelf is where saved work lives rather than a
+      // toll on the way to making some. `EditorScene` with no level handed to
+      // it resumes the draft, so this also picks up where you left off.
+      fadeTo(this, () => this.scene.start('cs-editor')),
     );
     this.howBtn = new Button(this, 0, 0, 'HOW TO PLAY', { width: 240, variant: 'secondary' }, () =>
       fadeTo(this, () => this.scene.start('cs-howto')),
@@ -226,7 +236,13 @@ export class MenuScene extends Phaser.Scene {
             : `u/${store.username}  ·  no score yet`,
         )
         .setColor(hex(store.best > 0 ? C.gold : C.dim));
-      this.playBtn.setCaption('PLAY').setEnabled(!this.starting);
+      // `starting` owns both halves. Writing the caption unconditionally here
+      // meant any redraw during the wait — the twelve-second board poll is
+      // enough — put "PLAY" back on a button that was still disabled, leaving a
+      // control that looked available, read as washed out, and did nothing.
+      this.playBtn
+        .setCaption(this.starting ? 'STARTING…' : 'PLAY')
+        .setEnabled(!this.starting);
     }
 
     // A refusal outranks the player's own standing: it is the reason this

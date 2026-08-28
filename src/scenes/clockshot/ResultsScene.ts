@@ -140,7 +140,10 @@ export class ResultsScene extends Phaser.Scene {
       void this.playAgain();
     });
     this.ui.onClick('[data-act="board"]', () => this.onBoard());
-    this.ui.onClick('[data-act="forge"]', () => fadeTo(this, () => this.scene.start('cs-levels')));
+    // "Forge your own" is a verb, so it lands on the thing that does it rather
+    // than on the shelf listing what has been done. Same reasoning as the
+    // menu's BUILD A LEVEL.
+    this.ui.onClick('[data-act="forge"]', () => fadeTo(this, () => this.scene.start('cs-editor')));
     this.ui.onClick('[data-act="back"]', () => this.flip('front'));
   }
 
