@@ -7,6 +7,19 @@
  * canvas have to be indistinguishable, and they can only stay that way if
  * neither side gets to invent a number.
  *
+ * There is a third copy, and it cannot be avoided: the splash card in
+ * `index.html`. That card has to paint before a single byte of JavaScript
+ * runs, so it cannot import anything — its tokens are written out by hand in a
+ * `<style>` block. It is also the first surface anybody sees, which makes it
+ * the reference the other two follow rather than the exception. The glass
+ * material is stated identically in all three:
+ *
+ *     sheen 0.06 over base rgba(7,11,22,0.88), rim 0.22, top hairline 0.44,
+ *     blur 16px, large radius 18px
+ *
+ * Changing it in one place and not the other two is the whole problem this
+ * comment exists to prevent.
+ *
  * The contrast figures in the palette are measured, not guessed, and the glass
  * values were solved against the brightest point of the backdrop. See the
  * comments in `theme.ts` before changing any of them.
@@ -47,11 +60,11 @@
      whether text is readable. Blur, rim and top hairline still do the glass,
      and the loop still moves behind it. Against a worst-case white frame this
      holds ~10:1 for `--cs-ink` and ~5.5:1 for `--cs-dim`. */
-  --cs-glass: rgba(255, 255, 255, 0.09);
-  --cs-glass-dense: rgba(255, 255, 255, 0.06);
+  --cs-glass: rgba(255, 255, 255, 0.06);
+  --cs-glass-dense: rgba(255, 255, 255, 0.04);
   --cs-glass-base: rgba(7, 11, 22, 0.88);
-  --cs-rim: rgba(255, 255, 255, 0.2);
-  --cs-rim-top: rgba(255, 255, 255, 0.42);
+  --cs-rim: rgba(255, 255, 255, 0.22);
+  --cs-rim-top: rgba(255, 255, 255, 0.44);
   --cs-blur: 16px;
 
   /* --- spacing, 4-point --- */
@@ -67,11 +80,13 @@
   --cs-r-sm: 8px;
   --cs-r-md: 12px;
   --cs-r-lg: 16px;
-  --cs-r-xl: 20px;
+  --cs-r-xl: 18px;
 
   /* --- motion --- */
   --cs-fast: 140ms;
   --cs-base: 200ms;
+  /* Matches `M.exit`, so DOM screens leave on the same beat as the camera. */
+  --cs-exit: 150ms;
 
   --cs-font: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
@@ -458,6 +473,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .cs-face,
+  .cs-screen,
   .cs-btn {
     transition-duration: 1ms;
   }
@@ -500,4 +516,366 @@
    screen would — so it is held back until the card is done. */
 body.cs-splash-up #game > canvas {
   visibility: hidden;
+}
+
+/* ------------------------------------------------------------------ menu -- */
+
+/* The menu scrolls rather than compressing. A phone in landscape cannot fit a
+   board, a title, five buttons and a feed at a legible size, and shrinking type
+   to make them fit is how a screen becomes unreadable in exactly the situation
+   where it is hardest to read. */
+.cs-menu {
+  max-width: 420px;
+  overflow-y: auto;
+  gap: var(--cs-lg);
+  padding: var(--cs-md) 0;
+}
+
+.cs-menu-board {
+  padding: var(--cs-lg) var(--cs-md);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: var(--cs-xs);
+}
+
+.cs-menu-board p {
+  margin: 0;
+}
+
+.cs-menu-top {
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--cs-gold);
+}
+
+.cs-menu-arena {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--cs-cyan);
+}
+
+.cs-menu-window {
+  font-size: 13px;
+  color: var(--cs-dim);
+}
+
+.cs-menu-prev {
+  font-size: 10px;
+  color: var(--cs-faint);
+}
+
+.cs-menu-title {
+  text-align: center;
+}
+
+.cs-menu-title p {
+  margin: var(--cs-xs) 0 0;
+}
+
+.cs-menu-wordmark {
+  margin: 0;
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  /* The tracking is on the right of every glyph including the last, which pushes
+     a centred word off-centre by half a step. */
+  text-indent: 0.3em;
+  color: var(--cs-gold);
+}
+
+.cs-menu-tagline {
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  color: var(--cs-faint);
+}
+
+/* One line, three meanings: who you are, what turned a run down, or that you
+   are not logged in. Tone carries which. */
+.cs-menu-you {
+  font-size: 13px;
+}
+.cs-menu-you[data-tone='gold'] {
+  color: var(--cs-gold);
+}
+.cs-menu-you[data-tone='dim'] {
+  color: var(--cs-dim);
+}
+.cs-menu-you[data-tone='notice'] {
+  color: var(--cs-gold);
+  font-weight: 700;
+}
+
+.cs-menu-feed {
+  padding: 0 var(--cs-lg);
+}
+
+.cs-menu-feed .cs-label {
+  margin: 0 0 var(--cs-sm);
+  text-align: center;
+}
+
+.cs-menu-feed-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--cs-xs);
+}
+
+.cs-menu-feed-rows li {
+  font-size: 11px;
+  color: var(--cs-dim);
+  text-align: center;
+}
+
+/* Nothing in the menu is a drag target, so the buttons keep the card's own
+   padding rather than the wider gutter the results card uses. */
+.cs-menu .cs-actions {
+  padding-left: var(--cs-lg);
+  padding-right: var(--cs-lg);
+}
+
+/* A screen on its way out, fading with the camera rather than surviving it.
+   `fadeTo` sets this; the next screen mounts without it. */
+.cs-screen {
+  transition: opacity var(--cs-exit) ease;
+}
+
+.cs-screen.cs-leaving {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ----------------------------------------------------------------- pause -- */
+
+/* The wash covers the arena rather than replacing it: a paused game you can
+   still see is a paused game you are still in. It takes pointer events on
+   purpose — the layer lets taps through by default, and a tap that missed a
+   button here would otherwise land on the canvas underneath. */
+/* Fixed, not absolute. `.cs-screen` carries the safe-area padding, and an
+   absolutely-positioned child is laid out against its *padding* box — so the
+   wash would have stopped short of the edges and left the arena showing through
+   a thin frame all the way round. Nothing above this is transformed, so `fixed`
+   resolves to the viewport and covers it properly. */
+.cs-pause-wash {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: max(env(safe-area-inset-top), var(--cs-md)) max(env(safe-area-inset-right), var(--cs-md))
+    max(env(safe-area-inset-bottom), var(--cs-md)) max(env(safe-area-inset-left), var(--cs-md));
+  background: rgba(7, 11, 22, 0.86);
+  pointer-events: auto;
+}
+
+/* No fixed height. The canvas version reserved 300 units and then laid 332 of
+   content into it, which is how the last button ended up outside the panel it
+   belonged to. */
+.cs-pause {
+  max-width: 340px;
+  overflow-y: auto;
+}
+
+.cs-pause-head {
+  padding: var(--cs-xxl) var(--cs-lg) 0;
+  text-align: center;
+}
+
+.cs-pause-title {
+  margin: 0;
+  font-size: 25px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-indent: 0.22em;
+  color: var(--cs-ink);
+}
+
+.cs-pause-note {
+  margin: var(--cs-sm) 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--cs-dim);
+}
+
+/* Green rather than gold: resuming is the safe way out, and gold is spoken for
+   by time everywhere else in the game. */
+.cs-btn-resume {
+  background: linear-gradient(180deg, #6dffc0, #1fd587);
+  color: #032417;
+  box-shadow:
+    0 8px 22px rgba(61, 255, 160, 0.24),
+    inset 0 1px 0 rgba(255, 255, 255, 0.45);
+}
+
+.cs-btn-resume:active {
+  background: linear-gradient(180deg, #57efad, #17bf76);
+}
+
+.cs-btn-danger {
+  border-color: rgba(255, 90, 61, 0.55);
+  color: #ffb3a3;
+}
+
+/* ------------------------------------------------------------------- hud -- */
+
+/* The run clock, over live gameplay. The layer passes taps through by default
+   and this adds no controls, so a swing started on top of the readout still
+   reaches the arena. */
+.cs-hud {
+  position: fixed;
+  top: max(env(safe-area-inset-top), var(--cs-sm));
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(268px, calc(100vw - var(--cs-xxl)));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--cs-xs);
+  pointer-events: none;
+}
+
+.cs-hud-clock {
+  width: 100%;
+  padding: var(--cs-md) var(--cs-lg) var(--cs-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--cs-sm);
+}
+
+.cs-hud-face {
+  display: flex;
+  align-items: center;
+  gap: var(--cs-md);
+}
+
+.cs-hud-dial {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  overflow: visible;
+}
+
+.cs-hud-dial circle {
+  fill: none;
+  stroke: var(--cs-faint);
+  stroke-width: 1.4;
+  opacity: 0.8;
+}
+
+.cs-hud-hand {
+  stroke: var(--cs-gold);
+  stroke-width: 2;
+  stroke-linecap: round;
+  transform-origin: 16px 16px;
+}
+
+.cs-hud-pin {
+  fill: var(--cs-gold);
+  stroke: none;
+  opacity: 1;
+}
+
+.cs-hud-read {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Tabular figures, so the clock does not shuffle sideways every tenth of a
+   second as digit widths change. */
+.cs-hud-digits {
+  font-size: 44px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--cs-gold);
+  font-variant-numeric: tabular-nums;
+  transform-origin: center;
+}
+
+.cs-hud-caption {
+  margin-top: 2px;
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  color: var(--cs-dim);
+}
+
+/* The drain bar, and the empty channel behind it. */
+.cs-hud-bar {
+  position: relative;
+  height: 9px;
+  border-radius: 999px;
+  background: #121c33;
+  overflow: hidden;
+}
+
+.cs-hud-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  min-width: 9px;
+  border-radius: 999px;
+  background: var(--cs-gold);
+  opacity: 0.95;
+}
+
+/* Five-second marks, so the bar has a scale to be read against. Written once
+   with the markup: they never move. */
+.cs-hud-bar i:not(.cs-hud-fill) {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--cs-bg);
+  opacity: 0.85;
+}
+
+.cs-hud-anchors {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: var(--cs-ink);
+  text-shadow: 0 1px 3px rgba(4, 7, 14, 0.9);
+}
+
+/* Nothing else on screen is red, so red means exactly one thing. */
+.cs-hud[data-urgent='true'] .cs-hud-digits,
+.cs-hud[data-urgent='true'] .cs-hud-hand {
+  color: var(--cs-danger);
+  stroke: var(--cs-danger);
+}
+
+.cs-hud[data-urgent='true'] .cs-hud-fill,
+.cs-hud[data-urgent='true'] .cs-hud-pin {
+  background: var(--cs-danger);
+  fill: var(--cs-danger);
+}
+
+.cs-hud[data-urgent='true'] .cs-hud-clock {
+  border-color: rgba(255, 90, 61, 0.9);
+}
+
+/* A beat on each of the last few seconds. Scale only — it does not move the
+   figures, which would make the clock hard to read exactly when it matters. */
+@keyframes cs-hud-beat {
+  from {
+    transform: scale(1.16);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+
+.cs-hud-beat {
+  animation: cs-hud-beat 260ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cs-hud-beat {
+    animation: none;
+  }
 }

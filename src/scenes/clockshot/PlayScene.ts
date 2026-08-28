@@ -10,6 +10,7 @@ import {
   type Rect,
 } from '@/clockshot/arena';
 import { C, FONT, T, hex } from '@/clockshot/theme';
+import { drawGlass } from '@/clockshot/glass';
 import { COMBAT, GRAVITY, WARNING_MS } from '@/clockshot/tuning';
 import { TEX, bakeTextures } from '@/clockshot/textures';
 import { ART, ENEMY_ANIM, fitArt, hasArt } from '@/clockshot/art';
@@ -216,7 +217,6 @@ export class PlayScene extends Phaser.Scene {
 
   // HUD
   private timer!: TimerHud;
-  private hudScore!: Phaser.GameObjects.Text;
   private hudTeam!: Phaser.GameObjects.Text;
   /** The pause affordance. Static, so it is painted on layout and left alone. */
   private hudChrome!: Phaser.GameObjects.Graphics;
@@ -754,12 +754,6 @@ export class PlayScene extends Phaser.Scene {
     this.hudChrome = this.add.graphics().setScrollFactor(0).setDepth(880);
     this.timer = new TimerHud(this, START_TIME_MS);
 
-    this.hudScore = this.add
-      .text(0, 0, '+0s', { fontFamily: FONT, fontSize: '20px', color: hex(C.ink) })
-      .setOrigin(0.5, 0)
-      .setScrollFactor(0)
-      .setDepth(882);
-
     // Says which level is being tested, so a builder is never a beat unsure
     // whether they are looking at their own arena or the community's.
     this.hudTeam = this.add
@@ -796,7 +790,6 @@ export class PlayScene extends Phaser.Scene {
     return [
       this.hudChrome,
       ...this.timer.objects(),
-      this.hudScore,
       this.hudTeam,
       this.pauseZone,
       ...this.controls.objects(),
@@ -818,7 +811,6 @@ export class PlayScene extends Phaser.Scene {
     this.playScrim?.setSize(L.w, L.h);
     this.timer.layout(L);
     this.drawChrome(L);
-    this.hudScore.setPosition(L.cx, L.y + 100 * L.ui).setFontSize(Math.round(T.label * L.ui));
     this.hudTeam.setPosition(L.x, L.y + 22 * L.ui).setFontSize(Math.round(T.label * L.ui));
     this.pauseZone
       .setPosition(L.x + L.iw - 24 * L.ui, L.y + 24 * L.ui)
@@ -852,10 +844,12 @@ export class PlayScene extends Phaser.Scene {
     // the zone around it is the part a thumb actually has to hit.
     const pxc = L.x + L.iw - 24 * L.ui;
     const pyc = L.y + 24 * L.ui;
-    g.fillStyle(C.panel, 0.9);
-    g.fillCircle(pxc, pyc, 20 * L.ui);
-    g.lineStyle(Math.max(1, 1.5 * L.ui), C.panelEdge, 0.9);
-    g.strokeCircle(pxc, pyc, 20 * L.ui);
+    const pr = 20 * L.ui;
+    // The same glass as the clock beside it and the cards either side of the
+    // run, rather than the older `C.panel` recipe it used to paint. A rounded
+    // rectangle whose radius is half its size is a circle, so the shared
+    // material needs no circular variant of its own.
+    drawGlass(g, pxc - pr, pyc - pr, pr * 2, pr * 2, pr, L.ui);
     g.fillStyle(C.ink, 0.9);
     g.fillRect(pxc - 6 * L.ui, pyc - 8 * L.ui, 4 * L.ui, 16 * L.ui);
     g.fillRect(pxc + 2 * L.ui, pyc - 8 * L.ui, 4 * L.ui, 16 * L.ui);
@@ -1165,7 +1159,7 @@ export class PlayScene extends Phaser.Scene {
   private updateHudText(): void {
     const n = this.player?.anchorsUsed.size ?? 0;
     this.shownAnchors = n;
-    this.hudScore.setText(n === 1 ? '1 anchor' : `${n} anchors`);
+    this.timer.setAnchors(n);
   }
 
   /* ---------------------------------------------------------------------- */

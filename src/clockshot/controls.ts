@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { C } from './theme';
+import { drawGlass } from './glass';
 import type { Layout } from './ui';
 import type { Intent } from './player';
 
@@ -324,6 +325,12 @@ export class Controls {
    */
   setGrappleState(ready: boolean, live: boolean): void {
     if (ready === this.grappleReady && live === this.grappleLive) return;
+    // The rope catching is the one moment in the game worth feeling. A thumb is
+    // covering the pad at the instant it happens, so the confirmation cannot be
+    // where the thumb is — and the sound is no use to the many players who meet
+    // this post muted. Short enough to be a tick rather than a buzz, and only
+    // on the catch: firing on release as well would make swinging feel noisy.
+    if (live && !this.grappleLive) navigator.vibrate?.(10);
     this.grappleReady = ready;
     this.grappleLive = live;
     this.drawGrapple();
@@ -412,16 +419,25 @@ export class Controls {
       g.strokeCircle(x, y, r * 1.16 * grow);
     }
 
-    g.fillStyle(C.panel, 0.92);
+    // The same pane every other surface in the game is made of, rather than the
+    // `C.panel` recipe this used to paint. A rounded rectangle whose radius is
+    // half its size is a circle, so the shared material needs no round variant.
+    drawGlass(g, x - r, y - r, r * 2, r * 2, r, ui);
+
+    // The cyan says what the pad is for, and how strongly it says it is the
+    // state. The resting values are deliberately not faint: holding the button
+    // *keeps* trying, and an anchor is caught the moment it comes into range —
+    // so a pad that looks switched off whenever nothing is near teaches the
+    // opposite of the way the rope is meant to be played. It should read as
+    // available and waiting, with `lit` as the promise that something is there.
+    g.fillStyle(C.cyan, on ? 0.34 : lit ? 0.18 : 0.12);
     g.fillCircle(x, y, r);
-    g.fillStyle(C.cyan, on ? 0.34 : lit ? 0.16 : 0.07);
-    g.fillCircle(x, y, r);
-    g.lineStyle(Math.max(2, 3 * ui), C.cyan, on ? 1 : lit ? 0.85 : 0.4);
+    g.lineStyle(Math.max(2, 3 * ui), C.cyan, on ? 1 : lit ? 0.9 : 0.62);
     g.strokeCircle(x, y, r);
 
     // The hook is the whole affordance now, so it is drawn big enough to be
     // read as a hook rather than decoration on a circle.
-    this.drawHook(g, x, y, r * 0.54, on ? 1 : lit ? 0.95 : 0.55);
+    this.drawHook(g, x, y, r * 0.54, on ? 1 : lit ? 0.95 : 0.72);
   }
 
   /** The hook itself: an eye, a shaft, a curl and a barb. Reads at thumb size. */

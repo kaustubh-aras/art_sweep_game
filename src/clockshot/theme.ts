@@ -111,7 +111,7 @@ export const R = {
   sm: 8,
   md: 12,
   lg: 16,
-  xl: 20,
+  xl: 18,
   pill: 999,
 } as const;
 
@@ -133,14 +133,18 @@ export const GLASS = {
    * this is the value at which every text colour still clears its floor over
    * the brightest field the backdrop can produce.
    */
-  base: 0.84,
+  base: 0.88,
   /**
-   * Translucent white over it, at the bottom of the 0.1-0.3 band.
+   * Translucent white over it.
    *
-   * 0.09 is the measured ceiling: above it, secondary text on the brightest
-   * part of the backdrop drops under 4.5:1.
+   * 0.09 was the measured *ceiling* — above it, secondary text on the
+   * brightest part of the backdrop drops under 4.5:1. This sits below that on
+   * purpose: it is the value the splash card uses, and the card is the first
+   * surface anyone sees, so it is the one the rest of the game matches rather
+   * than the other way round. Less white is also the safe direction to move a
+   * contrast floor in.
    */
-  fill: 0.09,
+  fill: 0.06,
   /**
    * The pane used by surfaces carrying a lot of small text.
    *
@@ -149,14 +153,14 @@ export const GLASS = {
    * means more of the dark underlay and less of the sheen, because every point
    * of white spent here is contrast taken away from the type sitting on it.
    */
-  fillDense: 0.06,
+  fillDense: 0.04,
   /** The specular falloff from the top edge. */
   sheen: 0.04,
   /** Rim width in design pixels, and its opacity. */
   rim: 1.25,
-  rimAlpha: 0.2,
+  rimAlpha: 0.22,
   /** The lit hairline along the top edge, where the light actually lands. */
-  rimTop: 0.42,
+  rimTop: 0.44,
   /** Backdrop blur for the DOM card, which can do the real thing. */
   blurPx: 16,
 } as const;
@@ -198,15 +202,6 @@ export function reducedMotion(): boolean {
 export function duration(ms: number): number {
   return reducedMotion() ? 0 : ms;
 }
-
-export const CSS = {
-  bg: '#070b16',
-  ink: '#e6edf8',
-  dim: '#8497b5',
-  faint: '#6f88ba',
-  gold: '#ffc63d',
-  cyan: '#3df0ff',
-} as const;
 
 export const FONT = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
 

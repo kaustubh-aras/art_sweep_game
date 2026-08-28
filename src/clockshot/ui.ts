@@ -4,6 +4,7 @@ import { drawGlass } from './glass';
 import { sfx } from './sfx';
 import { readInsets, type Insets } from '../ui/layout';
 import { dpr } from '../ui/viewport';
+import { getUiLayer } from './uiLayer';
 
 /**
  * The shared furniture every Clockshot screen is built from.
@@ -424,6 +425,14 @@ export function fadeTo(scene: Phaser.Scene, fn: () => void, ms = M.exit): void {
   // anything holding one destroys it on SHUTDOWN; see `TapProxy`.
   scene.input.enabled = false;
   scene.events.once(Phaser.Scenes.Events.SHUTDOWN, () => LEAVING.delete(scene));
+
+  // The camera fade paints the canvas, and a screen built on the DOM layer is
+  // not on the canvas — it would sit at full opacity over a darkening game and
+  // then vanish when the next scene started. Marking it here lets CSS take it
+  // out on the same beat.
+  for (const screen of Array.from(getUiLayer().children)) {
+    screen.classList.add('cs-leaving');
+  }
 
   scene.cameras.main.fadeOut(duration(ms), 7, 11, 22);
   scene.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, fn);
